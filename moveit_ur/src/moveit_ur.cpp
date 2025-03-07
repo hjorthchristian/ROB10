@@ -42,12 +42,12 @@ auto const draw_title = [&moveit_visual_tools](auto text) {
 auto const prompt = [&moveit_visual_tools](auto text) {
   moveit_visual_tools.prompt(text);
 };
-auto const draw_trajectory_tool_path =
-    [&moveit_visual_tools,
-     jmg = move_group_interface.getRobotModel()->getJointModelGroup(
-         "ur_manipulator")](auto const trajectory) {
-      moveit_visual_tools.publishTrajectoryLine(trajectory, jmg);
-    };
+// auto const draw_trajectory_tool_path =
+//     [&moveit_visual_tools,
+//      jmg = move_group_interface.getRobotModel()->getJointModelGroup(
+//          "ur_manipulator")](auto const trajectory) {
+//       moveit_visual_tools.publishTrajectoryLine(trajectory, jmg);
+//     };
 
 // Set a target Pose
 auto const target_pose = []{
@@ -120,7 +120,7 @@ return std::make_pair(ok, msg);
 
 // Execute the plan
 if(success) {
-  draw_trajectory_tool_path(plan.trajectory_);
+  //draw_trajectory_tool_path(plan.trajectory_);
   moveit_visual_tools.trigger();
   prompt("Press 'Next' in the RvizVisualToolsGui window to execute");
   draw_title("Executing");

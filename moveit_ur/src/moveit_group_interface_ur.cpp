@@ -150,8 +150,8 @@ waypoints.push_back(current_pose.pose);
 
 // Create a target pose that's 5cm higher in the Z direction
 geometry_msgs::msg::Pose target_pose = current_pose.pose;
-target_pose.position.z -= 0.05;  // Add 5cm in Z axis
-target_pose.position.y -= 0.05;  // Add 5cm in Y axis
+target_pose.position.z -= 0.0005;  // Add 5cm in Z axis
+target_pose.position.y -= 0.0005;  // Add 5cm in Y axis
 RCLCPP_INFO(LOGGER, "Target end effector pose: x=%.3f, y=%.3f, z=%.3f",
              target_pose.position.x, 
              target_pose.position.y, 

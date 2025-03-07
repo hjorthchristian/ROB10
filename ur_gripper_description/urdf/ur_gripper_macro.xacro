@@ -1,0 +1,59 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://ros.org/wiki/xacro">
+  <xacro:include filename="$(find ur_description)/urdf/ur_macro.xacro"/>
+
+  <xacro:macro name="ur_gripper" params="
+    parent
+    *origin
+    ur_type
+    joint_limits_parameters_file
+    kinematics_parameters_file
+    physical_parameters_file
+    visual_parameters_file
+    ">
+
+    <link name="robot_base"/>
+    <joint name="base_joint" type="fixed">
+      <xacro:insert_block name="origin" />
+      <parent link="${parent}" />
+      <child link="robot_base" />
+    </joint>
+
+    <!--This will create the specific robot-->
+    <xacro:ur_robot
+      name="${ur_type}"
+      tf_prefix="${ur_type}_"
+      parent="robot_base"
+      joint_limits_parameters_file="${joint_limits_parameters_file}"
+      kinematics_parameters_file="${kinematics_parameters_file}"
+      physical_parameters_file="${physical_parameters_file}"
+      visual_parameters_file="${visual_parameters_file}"
+    >
+      <origin xyz="0 0 0" rpy="0 0 0" />
+    </xacro:ur_robot>
+    
+    <!-- Add a simple gripper -->
+    <link name="gripper">
+      <visual>
+        <origin xyz="0 0 0" rpy="${-pi/2} ${0} ${0}"/>
+        <geometry>
+          <mesh filename="package://ur_gripper_description/meshes/VacuumGripper.dae" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0.0 0 0.05" rpy="${0} ${0} ${0}"/>
+        <geometry>
+          <box size="0.14 0.14 0.1"/>
+        </geometry>
+      </collision>
+    </link>
+    
+    <!-- Connect gripper to the robot's end effector -->
+    <joint name="tool0_to_gripper" type="fixed">
+      <parent link="${ur_type}_tool0"/>
+      <child link="gripper"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+
+</robot>

@@ -1,0 +1,21 @@
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Name: Global Options
+      Class: rviz_default_plugins/GlobalOptions
+      Fixed Frame: camera_link
+
+    - Name: Camera Color Image
+      Class: rviz_default_plugins/Image
+      Topic: /camera/color/image_raw
+      Transport Hint: raw
+
+    - Name: Camera Depth Image
+      Class: rviz_default_plugins/Image
+      Topic: /camera/depth/image_rect_raw
+      Transport Hint: raw
+
+    - Name: TF
+      Class: rviz_default_plugins/TF
+      Show Names: true
+  Enabled: true
