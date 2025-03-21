@@ -34,13 +34,13 @@ def generate_launch_description():
                 "ur20",
                 "ur30",
             ],
-            default_value="ur5e",
+            default_value="ur10",
         )
     )
     declared_arguments.append(
         DeclareLaunchArgument(
             "robot_ip",
-            default_value="192.168.1.51",  # put your robot's IP address here
+            default_value="192.168.1.2",  # put your robot's IP address here
             description="IP address by which the robot can be reached.",
         )
     )

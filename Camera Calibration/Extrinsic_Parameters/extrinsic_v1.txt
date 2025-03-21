@@ -1,0 +1,83 @@
+Attempting calibration with method: TSAI
+
+Hand-Eye Calibration Result (TSAI):
+Camera to Base Rotation Matrix:
+[[ 0.9966  0.0816  0.0124]
+ [ 0.0818 -0.9965 -0.0162]
+ [ 0.011   0.0172 -0.9998]]
+
+Camera to Base Translation (meters):
+[[0.4951]
+ [0.062 ]
+ [1.1159]]
+
+Camera to Base Translation (centimeters):
+[[ 49.5067]
+ [  6.197 ]
+ [111.5856]]
+
+Camera to Base Euler Angles (degrees, XYZ):
+[179.015   -0.6304   4.6941]
+
+Attempting calibration with method: PARK
+
+Hand-Eye Calibration Result (PARK):
+Camera to Base Rotation Matrix:
+[[ 0.9957  0.0921  0.0134]
+ [ 0.0922 -0.9957 -0.0035]
+ [ 0.013   0.0047 -0.9999]]
+
+Camera to Base Translation (meters):
+[[0.4964]
+ [0.0621]
+ [1.1166]]
+
+Camera to Base Translation (centimeters):
+[[ 49.6447]
+ [  6.2139]
+ [111.6584]]
+
+Camera to Base Euler Angles (degrees, XYZ):
+[179.7323  -0.7444   5.2894]
+
+Attempting calibration with method: HORAUD
+
+Hand-Eye Calibration Result (HORAUD):
+Camera to Base Rotation Matrix:
+[[ 0.9957  0.0921  0.0132]
+ [ 0.0921 -0.9957 -0.0035]
+ [ 0.0128  0.0047 -0.9999]]
+
+Camera to Base Translation (meters):
+[[0.4964]
+ [0.0621]
+ [1.1166]]
+
+Camera to Base Translation (centimeters):
+[[ 49.6443]
+ [  6.2146]
+ [111.6578]]
+
+Camera to Base Euler Angles (degrees, XYZ):
+[179.7325  -0.735    5.2869]
+
+Attempting calibration with method: ANDREFF
+
+Hand-Eye Calibration Result (ANDREFF):
+Camera to Base Rotation Matrix:
+[[ 0.9957  0.0922  0.0131]
+ [ 0.0923 -0.9957 -0.0035]
+ [ 0.0128  0.0047 -0.9999]]
+
+Camera to Base Translation (meters):
+[[0.4952]
+ [0.0624]
+ [1.1066]]
+
+Camera to Base Translation (centimeters):
+[[ 49.5193]
+ [  6.2381]
+ [110.6575]]
+
+Camera to Base Euler Angles (degrees, XYZ):
+[179.7321  -0.7315   5.2949]

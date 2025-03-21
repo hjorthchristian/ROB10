@@ -62,57 +62,57 @@ Visualization Manager:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-        ur5e_base:
+        ur10_base:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-        ur5e_base_link:
+        ur10_base_link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-        ur5e_base_link_inertia:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        ur5e_flange:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        ur5e_forearm_link:
+        ur10_base_link_inertia:
           Alpha: 1
           Show Axes: false
           Show Trail: false
           Value: true
-        ur5e_ft_frame:
+        ur10_flange:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-        ur5e_shoulder_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        ur5e_tool0:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        ur5e_upper_arm_link:
+        ur10_forearm_link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
           Value: true
-        ur5e_wrist_1_link:
+        ur10_ft_frame:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        ur10_shoulder_link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
           Value: true
-        ur5e_wrist_2_link:
+        ur10_tool0:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        ur10_upper_arm_link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
           Value: true
-        ur5e_wrist_3_link:
+        ur10_wrist_1_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        ur10_wrist_2_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        ur10_wrist_3_link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
@@ -138,29 +138,29 @@ Visualization Manager:
           Value: true
         robot_base:
           Value: true
-        ur5e_base:
+        ur10_base:
           Value: true
-        ur5e_base_link:
+        ur10_base_link:
           Value: true
-        ur5e_base_link_inertia:
+        ur10_base_link_inertia:
           Value: true
-        ur5e_flange:
+        ur10_flange:
           Value: true
-        ur5e_forearm_link:
+        ur10_forearm_link:
           Value: true
-        ur5e_ft_frame:
+        ur10_ft_frame:
           Value: true
-        ur5e_shoulder_link:
+        ur10_shoulder_link:
           Value: true
-        ur5e_tool0:
+        ur10_tool0:
           Value: true
-        ur5e_upper_arm_link:
+        ur10_upper_arm_link:
           Value: true
-        ur5e_wrist_1_link:
+        ur10_wrist_1_link:
           Value: true
-        ur5e_wrist_2_link:
+        ur10_wrist_2_link:
           Value: true
-        ur5e_wrist_3_link:
+        ur10_wrist_3_link:
           Value: true
         world:
           Value: true
@@ -172,21 +172,21 @@ Visualization Manager:
       Tree:
         world:
           robot_base:
-            ur5e_base_link:
-              ur5e_base:
+            ur10_base_link:
+              ur10_base:
                 {}
-              ur5e_base_link_inertia:
-                ur5e_shoulder_link:
-                  ur5e_upper_arm_link:
-                    ur5e_forearm_link:
-                      ur5e_wrist_1_link:
-                        ur5e_wrist_2_link:
-                          ur5e_wrist_3_link:
-                            ur5e_flange:
-                              ur5e_tool0:
+              ur10_base_link_inertia:
+                ur10_shoulder_link:
+                  ur10_upper_arm_link:
+                    ur10_forearm_link:
+                      ur10_wrist_1_link:
+                        ur10_wrist_2_link:
+                          ur10_wrist_3_link:
+                            ur10_flange:
+                              ur10_tool0:
                                 gripper:
                                   {}
-                            ur5e_ft_frame:
+                            ur10_ft_frame:
                               {}
       Update Interval: 0
       Value: true

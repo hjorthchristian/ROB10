@@ -13,10 +13,75 @@
     ">
 
     <link name="robot_base"/>
-    <joint name="base_joint" type="fixed">
-      <xacro:insert_block name="origin" />
-      <parent link="${parent}" />
-      <child link="robot_base" />
+    
+    <!-- Table base (dimensions 120x80x20 cm) -->
+    <link name="table_base">
+      <visual>
+        <geometry>
+          <box size="1.2 0.8 0.2"/>
+        </geometry>
+        <origin rpy="0 0 0" xyz="0 0 0.1"/> <!-- Center of the base -->
+        <material name="grey">
+          <color rgba="0.7 0.7 0.7 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <geometry>
+          <box size="1.2 0.8 0.2"/>
+        </geometry>
+        <origin rpy="0 0 0" xyz="0 0 0.1"/>
+      </collision>
+      <inertial> <!-- Add inertial properties -->
+        <mass value="50"/>
+        <inertia ixx="2.7" ixy="0.0" ixz="0.0" iyy="4.0" iyz="0.0" izz="5.3"/>
+      </inertial>
+    </link>
+
+    <!-- Joint to connect the table base to the world -->
+    <joint name="world_to_table_base" type="fixed">
+      <parent link="${parent}"/>
+      <child link="table_base"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+
+    <!-- Table (dimensions 100x40x72 cm) -->
+    <link name="table">
+      <visual>
+        <geometry>
+          <box size="1.0 0.40 0.72"/>
+        </geometry>
+        <origin rpy="0 0 0" xyz="0 0 0.36"/> <!-- Center of the table -->
+        <material name="brown">
+          <color rgba="0.8 0.6 0.4 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <geometry>
+          <box size="1.0 0.40 0.72"/>
+        </geometry>
+        <origin rpy="0 0 0" xyz="0 0 0.36"/>
+      </collision>
+      <inertial> <!-- Add inertial properties -->
+        <mass value="20"/>
+        <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.2" iyz="0.0" izz="0.8"/>
+      </inertial>
+    </link>
+    
+    <!-- Joint to connect the table to the table base -->
+    <joint name="table_base_to_table" type="fixed">
+      <parent link="table_base"/>
+      <child link="table"/>
+      <!-- Position the table on top of the table base -->
+      <origin xyz="0.1 0 0.2" rpy="0 0 0"/>
+    </joint>
+    
+    <!-- Important: Connect robot base to the table instead of world -->
+    <joint name="table_to_robot_base" type="fixed">
+      <parent link="table"/>
+      <child link="robot_base"/>
+      <!-- Position the robot on top of the table surface -->
+      <!-- 0.36 (to table center) + 0.36 (half table height) = 0.72 (to table top) -->
+      <origin xyz="-0.3 0.025 0.72" rpy="0 0 3.1419"/>
     </joint>
 
     <!--This will create the specific robot-->

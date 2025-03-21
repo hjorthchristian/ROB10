@@ -31,6 +31,8 @@
 
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
+# Add this import
+from launch_ros.parameter_descriptions import ParameterValue
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -85,7 +87,8 @@ def generate_launch_description():
             headless_mode,
         ]
     )
-    robot_description = {"robot_description": robot_description_content}
+    # Wrap robot_description_content with ParameterValue to specify it's a string
+    robot_description = {"robot_description": ParameterValue(robot_description_content, value_type=str)}
 
     declared_arguments = []
     # UR specific arguments
@@ -104,7 +107,7 @@ def generate_launch_description():
                 "ur20",
                 "ur30",
             ],
-            default_value="ur5e",
+            default_value="ur10",
         )
     )
     declared_arguments.append(
