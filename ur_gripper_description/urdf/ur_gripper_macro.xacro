@@ -81,7 +81,7 @@
       <child link="robot_base"/>
       <!-- Position the robot on top of the table surface -->
       <!-- 0.36 (to table center) + 0.36 (half table height) = 0.72 (to table top) -->
-      <origin xyz="-0.3 0.025 0.72" rpy="0 0 3.1419"/>
+      <origin xyz="-0.3 0.025 0.76" rpy="0 0 3.0543"/>  <!-- 3.1419 - (5 * π/180) = 3.0543 -->
     </joint>
 
     <!--This will create the specific robot-->
@@ -119,6 +119,106 @@
       <child link="gripper"/>
       <origin xyz="0 0 0" rpy="0 0 0"/>
     </joint>
-  </xacro:macro>
 
+    <!-- Add a RealSense D455 camera -->
+    <link name="camera_link">
+      <visual>
+        <geometry>
+         <box size="0.035 0.09 0.035"/>
+        </geometry>
+        <material name="aluminum">
+          <color rgba="0.5 0.5 0.5 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <geometry>
+          <box size="0.035 0.09 0.035"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="0.072"/>
+        <inertia ixx="0.00006" ixy="0" ixz="0" iyy="0.00006" iyz="0" izz="0.00006"/>
+      </inertial>
+    </link>
+
+    <!-- Camera mount structure -->
+    <link name="camera_mount_horizontal">
+      <visual>
+        <origin xyz="0 0 -0.3" rpy="0 0 0"/> <!-- Extend 60cm backward in camera frame -->
+        <geometry>
+          <box size="0.02 0.02 0.6"/>
+        </geometry>
+        <material name="dark_aluminum">
+          <color rgba="0.4 0.4 0.4 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 -0.3" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.02 0.02 0.6"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="0.5"/>
+        <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.015"/>
+      </inertial>
+    </link>
+    
+    <!-- Replace the camera_mount_vertical link and joint -->
+
+    <link name="camera_mount_vertical">
+      <visual>
+        <!-- Change from x-direction to z-direction for downward orientation -->
+        <origin xyz="0 0 -1.05" rpy="0 0 0"/> <!-- Extend 210cm downward -->
+        <geometry>
+          <box size="0.02 0.02 2.1"/>
+        </geometry>
+        <material name="dark_aluminum">
+          <color rgba="0.4 0.4 0.4 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 -1.05" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.02 0.02 2.1"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="1.0"/>
+        <inertia ixx="0.04" ixy="0" ixz="0" iyy="0.04" iyz="0" izz="0.001"/>
+      </inertial>
+    </link>
+    
+    <!-- Connect horizontal to vertical mount -->
+    <joint name="mount_horizontal_to_vertical" type="fixed">
+      <parent link="camera_mount_horizontal"/>
+      <child link="camera_mount_vertical"/>
+      <!-- Position at the end of the horizontal beam and rotate 90 degrees around Y to point downward -->
+      <origin xyz="0 0.03 -0.6" rpy="0 -1.5708 0"/>
+    </joint>
+    
+    <!-- Connect camera to horizontal mount -->
+    <joint name="camera_to_mount_horizontal" type="fixed">
+      <parent link="camera_link"/>
+      <child link="camera_mount_horizontal"/>
+      <!-- Attach to the back center of the camera -->
+      <origin xyz="0 0 -0.02" rpy="0 0 0"/>
+    </joint>
+    
+    <!-- Connect camera to the robot's base link -->
+    <joint name="ur10_base_link_to_camera" type="fixed">
+      <parent link="${ur_type}_base_link"/>
+      <child link="camera_link"/>
+      <origin xyz="0.440200 0.059500 1.112700" rpy="-2.4667 1.55676 -0.8047"/>
+    </joint>
+    
+    <!-- Add TCP frame -->
+    <link name="${ur_type}_tcp"/>
+    <joint name="tool0_to_tcp" type="fixed">
+      <parent link="${ur_type}_tool0"/>
+      <child link="${ur_type}_tcp"/>
+      <origin xyz="0 0 0.11" rpy="0 0 0"/>
+    </joint>
+    
+  </xacro:macro>
 </robot>

@@ -34,7 +34,7 @@ class TerminalDataCollector(Node):
         self.running = True
         
         # Create output directory
-        self.output_dir = "calibration_data"
+        self.output_dir = "calibration_50_images"
         os.makedirs(self.output_dir, exist_ok=True)
         
         self.get_logger().info("Terminal-Based Data Collector started")

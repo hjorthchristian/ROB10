@@ -71,8 +71,8 @@ def main():
     # Data collection with enhanced error handling
     valid_frames = 0
     for i in range(1, 101):
-        image_path = f'calibration_data/frame_{i:03d}.png'
-        transform_path = f'calibration_data/transform_{i:03d}.txt'
+        image_path = f'calibration_50_images/frame_{i:03d}.png'
+        transform_path = f'calibration_50_images/transform_{i:03d}.txt'
         
         if not (os.path.exists(image_path) and os.path.exists(transform_path)):
             print(f"Stopped at frame {i}: files not found")
