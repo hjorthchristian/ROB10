@@ -1,0 +1,25 @@
+moveit_setup_assistant_config:
+  urdf:
+    package: ur_gripper_description
+    relative_path: urdf/ur_gripper.urdf.xacro
+  srdf:
+    relative_path: config/ur_gripper.srdf
+  package_settings:
+    author_name: Christian Aleksander Hjorth
+    author_email: cankhjorth@gmail.com
+    generated_timestamp: 1743429508
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
+  modified_urdf:
+    xacros:
+      - control_xacro
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
