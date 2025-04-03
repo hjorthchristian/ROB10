@@ -1,0 +1,6 @@
+# Request fields
+int8 release_vacuum # Use 1 to release the vacuum
+---
+# Response fields
+bool success
+string message

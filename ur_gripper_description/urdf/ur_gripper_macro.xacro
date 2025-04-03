@@ -48,18 +48,18 @@
     <link name="table">
       <visual>
         <geometry>
-          <box size="1.0 0.40 0.72"/>
+          <box size="1.0 0.40 0.76"/>
         </geometry>
-        <origin rpy="0 0 0" xyz="0 0 0.36"/> <!-- Center of the table -->
+        <origin rpy="0 0 0" xyz="0 0 0.38"/> <!-- Center of the table -->
         <material name="brown">
           <color rgba="0.8 0.6 0.4 1.0"/>
         </material>
       </visual>
       <collision>
         <geometry>
-          <box size="1.0 0.40 0.72"/>
+          <box size="1.0 0.40 0.76"/>
         </geometry>
-        <origin rpy="0 0 0" xyz="0 0 0.36"/>
+        <origin rpy="0 0 0" xyz="0 0 0.38"/>
       </collision>
       <inertial> <!-- Add inertial properties -->
         <mass value="20"/>
@@ -96,26 +96,49 @@
     >
       <origin xyz="0 0 0" rpy="0 0 0" />
     </xacro:ur_robot>
+
+    <link name="quick_tool_changer">
+      <visual>
+        <origin xyz="0 0 0" rpy="${-pi/2} ${0} ${0}"/>
+        <geometry>
+          <mesh filename="package://ur_gripper_description/meshes/quick_changer.dae" scale="0.001 0.001 0.001"/>
+        </geometry>
+        </visual>
+        <collision>
+          <origin xyz="0 0 0" rpy="${0} ${0} ${0}"/>
+          <geometry>
+          <box size="0.09 0.09 0.016"/>
+          </geometry>
+        </collision>
+        </link>
+    
+    <joint name="tool0_to_quick_tool_changer" type="fixed">
+      <parent link="${ur_type}_tool0"/>
+      <child link="quick_tool_changer"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
     
     <!-- Add a simple gripper -->
     <link name="gripper">
       <visual>
         <origin xyz="0 0 0" rpy="${-pi/2} ${0} ${0}"/>
         <geometry>
-          <mesh filename="package://ur_gripper_description/meshes/VacuumGripper.dae" scale="0.001 0.001 0.001"/>
+          <mesh filename="package://ur_gripper_description/meshes/VG10_v2.dae" scale="0.001 0.001 0.001"/>
         </geometry>
       </visual>
       <collision>
-        <origin xyz="0.0 0 0.05" rpy="${0} ${0} ${0}"/>
+        <origin xyz="0.0 0 0.066" rpy="${0} ${0} ${0}"/>
         <geometry>
-          <box size="0.14 0.14 0.1"/>
+          <box size="0.15 0.15 0.11"/>
         </geometry>
       </collision>
     </link>
+
+
     
     <!-- Connect gripper to the robot's end effector -->
     <joint name="tool0_to_gripper" type="fixed">
-      <parent link="${ur_type}_tool0"/>
+      <parent link="quick_tool_changer"/>
       <child link="gripper"/>
       <origin xyz="0 0 0" rpy="0 0 0"/>
     </joint>
