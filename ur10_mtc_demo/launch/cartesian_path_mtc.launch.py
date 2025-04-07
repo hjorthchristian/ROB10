@@ -10,7 +10,7 @@ def generate_launch_description():
     # MTC Demo node
     mtc_demo = Node(
         package="ur10_mtc_demo",
-        executable="mtc_node",
+        executable="cartesian_path_mtc",
         output="screen",
         parameters=[
             moveit_config,

@@ -40,6 +40,28 @@ ament_target_dependencies(
   "moveit_visual_tools"
 )
 
+add_executable(get_tcp_pose src/get_tcp_pose.cpp)
+target_include_directories(get_tcp_pose PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_compile_features(get_tcp_pose PUBLIC c_std_99 cxx_std_17)
+ament_target_dependencies(get_tcp_pose
+  rclcpp
+  moveit_ros_planning_interface
+  # Add other dependencies if required
+)
+
+# Add the new move_to_pose_move_group executable
+add_executable(move_to_pose_movegroup src/move_to_pose_movegroup.cpp)
+target_include_directories(move_to_pose_movegroup PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_compile_features(move_to_pose_movegroup PUBLIC c_std_99 cxx_std_17)
+ament_target_dependencies(move_to_pose_movegroup
+  rclcpp
+  moveit_ros_planning_interface
+)
+
 install(
   DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}
@@ -50,7 +72,7 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
-install(TARGETS moveit_ur move_group_interface_ur
+install(TARGETS moveit_ur move_group_interface_ur get_tcp_pose move_to_pose_movegroup
   DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)

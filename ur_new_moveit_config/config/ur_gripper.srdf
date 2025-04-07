@@ -34,9 +34,13 @@
     <disable_collisions link1="camera_mount_vertical" link2="ur10_base_link_inertia" reason="Never"/>
     <disable_collisions link1="camera_mount_vertical" link2="ur10_shoulder_link" reason="Never"/>
     <disable_collisions link1="camera_mount_vertical" link2="ur10_upper_arm_link" reason="Never"/>
+    <disable_collisions link1="gripper" link2="quick_tool_changer" reason="User"/>
     <disable_collisions link1="gripper" link2="ur10_wrist_1_link" reason="Never"/>
     <disable_collisions link1="gripper" link2="ur10_wrist_2_link" reason="Never"/>
     <disable_collisions link1="gripper" link2="ur10_wrist_3_link" reason="Adjacent"/>
+    <disable_collisions link1="quick_tool_changer" link2="ur10_wrist_1_link" reason="User"/>
+    <disable_collisions link1="quick_tool_changer" link2="ur10_wrist_2_link" reason="User"/>
+    <disable_collisions link1="quick_tool_changer" link2="ur10_wrist_3_link" reason="User"/>
     <disable_collisions link1="table" link2="table_base" reason="Adjacent"/>
     <disable_collisions link1="table" link2="ur10_base_link_inertia" reason="Adjacent"/>
     <disable_collisions link1="table" link2="ur10_shoulder_link" reason="Never"/>

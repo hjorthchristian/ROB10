@@ -105,7 +105,7 @@
         </geometry>
         </visual>
         <collision>
-          <origin xyz="0 0 0" rpy="${0} ${0} ${0}"/>
+          <origin xyz="0 0 0.008" rpy="${0} ${0} ${0}"/>
           <geometry>
           <box size="0.09 0.09 0.016"/>
           </geometry>
@@ -167,18 +167,18 @@
     <!-- Camera mount structure -->
     <link name="camera_mount_horizontal">
       <visual>
-        <origin xyz="0 0 -0.3" rpy="0 0 0"/> <!-- Extend 60cm backward in camera frame -->
+        <origin xyz="0 0 -0.225" rpy="0 0 0"/> <!-- Extend 60cm backward in camera frame -->
         <geometry>
-          <box size="0.02 0.02 0.6"/>
+          <box size="0.02 0.02 0.45"/>
         </geometry>
         <material name="dark_aluminum">
           <color rgba="0.4 0.4 0.4 1.0"/>
         </material>
       </visual>
       <collision>
-        <origin xyz="0 0 -0.3" rpy="0 0 0"/>
+        <origin xyz="0 0 -0.225" rpy="0 0 0"/>
         <geometry>
-          <box size="0.02 0.02 0.6"/>
+          <box size="0.02 0.02 0.45"/>
         </geometry>
       </collision>
       <inertial>
@@ -194,7 +194,7 @@
         <!-- Change from x-direction to z-direction for downward orientation -->
         <origin xyz="0 0 -1.05" rpy="0 0 0"/> <!-- Extend 210cm downward -->
         <geometry>
-          <box size="0.02 0.02 2.1"/>
+          <box size="0.03 0.03 2.1"/>
         </geometry>
         <material name="dark_aluminum">
           <color rgba="0.4 0.4 0.4 1.0"/>
@@ -203,7 +203,7 @@
       <collision>
         <origin xyz="0 0 -1.05" rpy="0 0 0"/>
         <geometry>
-          <box size="0.02 0.02 2.1"/>
+          <box size="0.03 0.03 2.1"/>
         </geometry>
       </collision>
       <inertial>
@@ -217,7 +217,7 @@
       <parent link="camera_mount_horizontal"/>
       <child link="camera_mount_vertical"/>
       <!-- Position at the end of the horizontal beam and rotate 90 degrees around Y to point downward -->
-      <origin xyz="0 0.03 -0.6" rpy="0 -1.5708 0"/>
+      <origin xyz="0 0.03 -0.45" rpy="0 -1.5708 0"/>
     </joint>
     
     <!-- Connect camera to horizontal mount -->
@@ -240,7 +240,7 @@
     <joint name="tool0_to_tcp" type="fixed">
       <parent link="${ur_type}_tool0"/>
       <child link="${ur_type}_tcp"/>
-      <origin xyz="0 0 0.11" rpy="0 0 0"/>
+      <origin xyz="0 0 0.126" rpy="0 0 0"/>
     </joint>
     
     <!-- Add a virtual vacuum gripper control link and joint -->
