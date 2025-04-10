@@ -1,0 +1,13 @@
+# Request
+sensor_msgs/Image image
+string text_prompt
+float32 confidence_threshold
+---
+# Response
+sensor_msgs/Image segmented_image      # Original image with segmentation overlay
+sensor_msgs/Image[] mask_images        # Binary masks for each detected object
+geometry_msgs/PolygonStamped[] contours # Polygon contours of detected objects
+string[] labels                        # Object class names
+float32[] scores                       # Confidence scores
+geometry_msgs/Point[] centroids        # 3D center points of detected objects
+std_msgs/Header header                 # Header with timestamp and frame_id

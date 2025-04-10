@@ -22,6 +22,7 @@ setup(
     entry_points={
         'console_scripts': [
             'image_subscriber = image_processor.image_subscriber:main',
+            'lang_sam_client = image_processor.lang_sam_client:main',
         ],
     },
 )

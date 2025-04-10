@@ -22,19 +22,19 @@ int main(int argc, char** argv) {
   move_group.setEndEffectorLink("ur10_tcp");
 
   // Set planning parameters
-  move_group.setPlanningTime(5.0);
+  move_group.setPlanningTime(15.0);
   move_group.setMaxVelocityScalingFactor(0.1);
   move_group.setMaxAccelerationScalingFactor(0.1);
   
   // Create the target pose
   geometry_msgs::msg::Pose target_pose;
-  target_pose.position.x = 0.734647;
-  target_pose.position.y = 0.303083;
-  target_pose.position.z = -0.436118;
-  target_pose.orientation.x = -0.070557;
-  target_pose.orientation.y = 0.997330;
-  target_pose.orientation.z = 0.009466;
-  target_pose.orientation.w = -0.016255;
+  target_pose.position.x = -0.83576;
+  target_pose.position.y = -0.19447;
+  target_pose.position.z = 0.353761;
+  target_pose.orientation.x =  0.206;
+  target_pose.orientation.y = 0.978;
+  target_pose.orientation.z = 0.021;
+  target_pose.orientation.w = -0.003;
   
   // Set the target pose
   move_group.setPoseTarget(target_pose);
