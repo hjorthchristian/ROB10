@@ -149,6 +149,7 @@ class LangSAMClient(Node):
             self.get_logger().info(f'Image shape: {cv_visualized_image.shape}')
             cv2.imshow('Result', cv_visualized_image)
             cv2.waitKey(15500)  # Display for 2.5 seconds
+            cv2.destroyAllWindows()
             #pil_image = Image.fromarray(visualized_image)
             #pil_image.show() 
             
