@@ -1,8 +1,22 @@
 import numpy as np
 
 # Define test point in camera frame
-point = np.array([0.31809, -0.21709, 1.048, 1.0])  # Your point with homogeneous coordinate
+point = np.array([-0.064459, -0.689965, 1.633000, 1.0])  # Your point with homogeneous coordinate X_CAM: -0.064459 m
+# Y_CAM: -0.689965 m
+# Z_CAM: 1.633000 m
 print("Original point in camera frame:", point[:3])
+
+T_base_to_camera = np.array([
+    [0.995, 0.095, 0.007, 0.499],
+    [0.095, -0.995, -0.005, 0.065],
+    [0.006, 0.006, -1.000, 1.114],
+    [0.000, 0.000, 0.000, 1.000]
+])
+
+# Transform point from base to camera frame
+point_in_camera = T_base_to_camera @ point
+
+print("\nTransformed point in camera frame:", point_in_camera[:3])
 
 # Main transform from camera_color_optical_frame to ur10_base_link
 transform_matrix = np.array([
@@ -13,8 +27,8 @@ transform_matrix = np.array([
 ])
 
 # Define the expected point range based on user input
-expected_point_min = np.array([-0.8, -0.3, -0.05])
-expected_point_max = np.array([-0.8, -0.1, 0.10])
+expected_point_min = np.array([0.3, 0.77, -0.75])
+expected_point_max = np.array([0.44, 0.67, -0.45])
 expected_point_center = (expected_point_min + expected_point_max) / 2
 print(f"Expected point range: x: {expected_point_min[0]} to {expected_point_max[0]}, " +
       f"y: {expected_point_min[1]} to {expected_point_max[1]}, " +
@@ -70,7 +84,7 @@ def create_90_degree_rotations():
         ])
     
     # Generate all combinations of rotations in 90-degree increments
-    angles = [0, np.pi/2, np.pi, 3*np.pi/2]  # 0, 90, 180, 270 degrees
+    angles = [0, np.pi/4, np.pi/2, 3*np.pi/4, np.pi, 5*np.pi/4, 3*np.pi/2, 7*np.pi/4]  # 0, 90, 180, 270 degrees
     
     # Create all combinations of rotations
     for x_angle in angles:
@@ -274,3 +288,256 @@ for i, result in enumerate(realsense_results):
     print("Rotation matrix:")
     print(np.round(result['rotation'][:3,:3], 2))
     print("-" * 60)
+
+# Add a new section at the end for reverse transformation
+print("\n=== REVERSE TRANSFORMATION (ROBOT BASE TO CAMERA) ===")
+
+# Calculate the inverse of the transformation matrix
+def invert_transform(transform):
+    """Invert a 4x4 transformation matrix"""
+    # Extract the rotation matrix (3x3) and translation vector (3x1)
+    rotation = transform[:3, :3]
+    translation = transform[:3, 3]
+    
+    # Calculate inverse rotation (transpose) and inverse translation
+    inv_rotation = rotation.T
+    inv_translation = -inv_rotation @ translation
+    
+    # Create the inverse transformation matrix
+    inv_transform = np.eye(4)
+    inv_transform[:3, :3] = inv_rotation
+    inv_transform[:3, 3] = inv_translation
+    
+    return inv_transform
+
+# Invert the main transformation matrix
+inverse_transform = invert_transform(transform_matrix)
+print("Inverse transformation matrix:")
+print(np.round(inverse_transform, 3))
+
+# Function to transform a point from robot base to camera frame
+def transform_to_camera(point_base):
+    """Transform a point from robot base frame to camera frame"""
+    # Convert to homogeneous coordinates if needed
+    if len(point_base) == 3:
+        point_base = np.append(point_base, 1.0)
+    
+    # Apply inverse transformation
+    point_camera = inverse_transform @ point_base
+    
+    return point_camera[:3]  # Return just the 3D coordinates
+
+# Example: Transform the given point back to camera frame
+robot_point = np.array([0.372, 0.739, -0.521, 1.0])
+camera_point = transform_to_camera(robot_point)
+
+print(f"\nPoint in robot base frame: {robot_point[:3]}")
+print(f"Transformed to camera frame: {camera_point}")
+
+# Verify by transforming back to robot frame
+robot_point_verification = transform_matrix @ np.append(camera_point, 1.0)
+print(f"Verification - transformed back to robot frame: {robot_point_verification[:3]}")
+print(f"Original robot point: {robot_point[:3]}")
+print(f"Difference: {np.round(robot_point[:3] - robot_point_verification[:3], 6)}")
+
+# Apply the reverse transformation with each of the top rotation matrices
+print("\n=== USING TOP ROTATION MATRICES FOR REVERSE TRANSFORMATION ===")
+
+for i, result in enumerate(results[:3]):  # Show top 3 rotations
+    rot_matrix = result['rotation']
+    rot_name = result['rot_name']
+    
+    # Calculate the combined transform with this rotation
+    combined = transform_matrix @ rot_matrix
+    
+    # Calculate the inverse of the combined transform
+    inverse_combined = invert_transform(combined)
+    
+    # Apply the inverse transform to the robot point
+    camera_point_with_rot = inverse_combined @ robot_point
+    
+    print(f"\nUsing rotation {rot_name}:")
+    print(f"Point in camera frame: {camera_point_with_rot[:3]}")
+    
+    # Verify by transforming back
+    verification = combined @ np.append(camera_point_with_rot[:3], 1.0)
+    print(f"Verification error: {np.round(robot_point[:3] - verification[:3], 6)}")
+
+# Add visualization using matplotlib
+print("\n=== VISUALIZATION OF COORDINATE FRAMES AND POINTS ===")
+
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.patches import FancyArrowPatch
+from mpl_toolkits.mplot3d import proj3d
+
+# Define a custom 3D arrow for better visualization
+class Arrow3D(FancyArrowPatch):
+    def __init__(self, xs, ys, zs, *args, **kwargs):
+        super().__init__((0, 0), (0, 0), *args, **kwargs)
+        self._verts3d = xs, ys, zs
+
+    def do_3d_projection(self, renderer=None):
+        xs3d, ys3d, zs3d = self._verts3d
+        xs, ys, zs = proj3d.proj_transform(xs3d, ys3d, zs3d, self.axes.M)
+        self.set_positions((xs[0], ys[0]), (xs[1], ys[1]))
+        
+        # Calculate the z-order based on the average z position
+        avg_z = (zs[0] + zs[1]) / 2
+        return avg_z  # Return the z-order
+
+    def draw(self, renderer):
+        super().draw(renderer)
+
+# Function to plot a coordinate frame
+def plot_frame(ax, origin, rotation_matrix, scale=0.1, name=""):
+    colors = ['r', 'g', 'b']
+    labels = ['X', 'Y', 'Z']
+    
+    # Plot the origin
+    ax.scatter(origin[0], origin[1], origin[2], color='black', s=50)
+    
+    # Plot coordinate frame text label
+    ax.text(origin[0], origin[1], origin[2] + 0.05, name, fontsize=10)
+    
+    # Plot each axis
+    for i in range(3):
+        axis = rotation_matrix[:3, i] * scale
+        arrow = Arrow3D([origin[0], origin[0] + axis[0]],
+                        [origin[1], origin[1] + axis[1]],
+                        [origin[2], origin[2] + axis[2]],
+                        mutation_scale=20, lw=2, arrowstyle='-|>', color=colors[i])
+        ax.add_artist(arrow)
+        ax.text(origin[0] + axis[0]*1.1, 
+                origin[1] + axis[1]*1.1, 
+                origin[2] + axis[2]*1.1, 
+                f"{name}_{labels[i]}", color=colors[i], fontsize=8)
+
+def print_matrix(matrix):
+    """Print the matrix in a formatted way"""
+    for row in matrix:
+        print("  ".join([f"{val:6.3f}" for val in row]))
+
+# Original transformation matrix (base to camera optical frame)
+T_base_to_camera = np.array([
+    [0.995, 0.095, 0.007, 0.499],
+    [0.095, -0.995, -0.005, 0.065],
+    [0.006, 0.006, -1.000, 1.114],
+    [0.000, 0.000, 0.000, 1.000]
+])
+
+# Compute the inverse transformation (camera optical frame to base)
+T_camera_to_base = np.linalg.inv(T_base_to_camera)
+
+print("Original Transform (Base to Camera):")
+print_matrix(T_base_to_camera)
+print("\nInverse Transform (Camera to Base):")
+print_matrix(T_camera_to_base)
+
+# Verify that the inverse is correct by multiplying the two matrices
+verification = np.matmul(T_base_to_camera, T_camera_to_base)
+print("\nVerification (should be identity matrix):")
+print_matrix(verification)
+
+# Extract position and orientation data from the inverse transform
+position = T_camera_to_base[:3, 3]
+rotation_matrix = T_camera_to_base[:3, :3]
+
+print("\nCamera position in base frame:")
+print(f"x: {position[0]:.3f}, y: {position[1]:.3f}, z: {position[2]:.3f}")
+
+# You can also compute Euler angles if needed
+# This is just one possible convention (ZYX)
+try:
+    from scipy.spatial.transform import Rotation
+    r = Rotation.from_matrix(rotation_matrix)
+    euler = r.as_euler('xyz', degrees=True)
+    print("\nCamera orientation in base frame (Euler angles XYZ in degrees):")
+    print(f"Roll: {euler[0]:.3f}, Pitch: {euler[1]:.3f}, Yaw: {euler[2]:.3f}")
+except ImportError:
+    print("\nInstall scipy to compute Euler angles")
+
+# Create the figure
+fig = plt.figure(figsize=(10, 8))
+ax = fig.add_subplot(111, projection='3d')
+
+# Camera frame origin and orientation in world coordinates
+base_to_camera_transform = np.array([
+    [0.995, 0.095, 0.007, 0.499],
+    [0.095, -0.995, -0.005, 0.065],
+    [0.006, 0.006, -1.000, 1.114],
+    [0.000, 0.000, 0.000, 1.000]
+])
+camera_orientation = base_to_camera_transform[:3, :3]
+camera_origin = np.array([0.499, 0.065, 1.114])
+
+# Base link frame (robot base)
+base_origin = np.array([0, 0, 0])
+base_orientation = np.eye(3)  # Identity matrix for the base frame
+
+# Plot the frames
+plot_frame(ax, base_origin, base_orientation, scale=0.3, name="base_link")
+plot_frame(ax, camera_origin, camera_orientation, scale=0.3, name="camera")
+
+# Plot the points
+# Original point in camera frame - we need to transform to world coordinates
+camera_point_in_world = transform_matrix @ point
+ax.scatter(camera_point_in_world[0], camera_point_in_world[1], camera_point_in_world[2], 
+           color='orange', s=100, marker='o', label='Original Point (camera)')
+
+# Expected point in base frame
+ax.scatter(expected_point_center[0], expected_point_center[1], expected_point_center[2], 
+           color='green', s=100, marker='o', label='Expected Point (base)')
+
+# Direct transform result
+ax.scatter(direct_result[0], direct_result[1], direct_result[2], 
+           color='blue', s=100, marker='o', label='Direct Transform (base)')
+
+# Add expected point range as a box
+from itertools import product
+for p in product([expected_point_min[0], expected_point_max[0]],
+                 [expected_point_min[1], expected_point_max[1]],
+                 [expected_point_min[2], expected_point_max[2]]):
+    ax.scatter(*p, color='green', alpha=0.3, s=20)
+
+# Connect the box points to form a cube
+for s, e in [
+    ([0, 0, 0], [1, 0, 0]), ([0, 0, 0], [0, 1, 0]), ([0, 0, 0], [0, 0, 1]),
+    ([1, 0, 0], [1, 1, 0]), ([1, 0, 0], [1, 0, 1]), ([0, 1, 0], [1, 1, 0]),
+    ([0, 1, 0], [0, 1, 1]), ([0, 0, 1], [1, 0, 1]), ([0, 0, 1], [0, 1, 1]),
+    ([1, 1, 1], [1, 1, 0]), ([1, 1, 1], [1, 0, 1]), ([1, 1, 1], [0, 1, 1])
+]:
+    ax.plot3D([expected_point_min[0] + s[0]*(expected_point_max[0] - expected_point_min[0]),
+               expected_point_min[0] + e[0]*(expected_point_max[0] - expected_point_min[0])],
+              [expected_point_min[1] + s[1]*(expected_point_max[1] - expected_point_min[1]),
+               expected_point_min[1] + e[1]*(expected_point_max[1] - expected_point_min[1])],
+              [expected_point_min[2] + s[2]*(expected_point_max[2] - expected_point_min[2]),
+               expected_point_min[2] + e[2]*(expected_point_max[2] - expected_point_min[2])],
+              'green', alpha=0.3)
+
+# Add legend, labels, and title
+ax.legend()
+ax.set_xlabel('X [m]')
+ax.set_ylabel('Y [m]')
+ax.set_zlabel('Z [m]')
+ax.set_title('Camera and Base Link Coordinate Frames with Points')
+
+# Set equal aspect ratio
+max_range = np.array([ax.get_xlim(), ax.get_ylim(), ax.get_zlim()]).T
+max_extent = np.max(max_range[1] - max_range[0])
+ax.set_box_aspect([1, 1, 1])
+
+# Set the limits to ensure everything is visible
+ax.set_xlim(min(camera_origin[0], base_origin[0], expected_point_min[0], direct_result[0]) - 0.5, 
+            max(camera_origin[0], base_origin[0], expected_point_max[0], direct_result[0]) + 0.5)
+ax.set_ylim(min(camera_origin[1], base_origin[1], expected_point_min[1], direct_result[1]) - 0.5, 
+            max(camera_origin[1], base_origin[1], expected_point_max[1], direct_result[1]) + 0.5)
+ax.set_zlim(min(camera_origin[2], base_origin[2], expected_point_min[2], direct_result[2]) - 0.5, 
+            max(camera_origin[2], base_origin[2], expected_point_max[2], direct_result[2]) + 0.5)
+
+# Add grid for better depth perception
+ax.grid(True)
+
+print("Plotting coordinate frames and points...")
+plt.tight_layout()
+plt.show()

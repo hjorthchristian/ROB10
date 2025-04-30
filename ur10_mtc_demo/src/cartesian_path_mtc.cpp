@@ -95,9 +95,9 @@ mtc::Task MTCTaskNode::createTask()
 
   // Configure a Cartesian path planner instead of sampling planner
   auto cartesian_planner = std::make_shared<mtc::solvers::CartesianPath>();
-  cartesian_planner->setMaxVelocityScalingFactor(0.10);  // 30% of maximum velocity
-  cartesian_planner->setMaxAccelerationScalingFactor(0.10);  // 20% of maximum acceleration
-  cartesian_planner->setStepSize(0.01);  // Small step size for smoother motion
+  cartesian_planner->setMaxVelocityScalingFactor(0.05);  // 30% of maximum velocity
+  cartesian_planner->setMaxAccelerationScalingFactor(0.05);  // 20% of maximum acceleration
+  cartesian_planner->setStepSize(0.005);  // Small step size for smoother motion
   cartesian_planner->setMinFraction(0.9);
   
   // Define the target pose
@@ -109,15 +109,17 @@ mtc::Task MTCTaskNode::createTask()
   // -0.83576    -0.19447    0.053761]
   //0.00075566     0.99719   -0.010148    0.074253   0.206, 0.978, 0.021, -0.003  0.83608     0.19466
   //    0.032684    0.059212  -0.0019397     0.99771]
-  // 0.0018855     0.98682    0.011527     0.16142] 0.78665     0.21035
-  target_pose.pose.position.x = 0.78665 ;
-  target_pose.pose.position.y =  0.21035;
-  target_pose.pose.position.z = 0.253761;
-  target_pose.pose.orientation.x =  0.0018855 ;
-  target_pose.pose.orientation.y = 0.98682 ;
-  target_pose.pose.orientation.z = 0.011527;
-  target_pose.pose.orientation.w = 0.16142;
+  // 0.0018855     0.98682    0.011527     0.16142] 0.78665     0.21035 Position: [0.4192, 0.7405, -0.5504]
+  //[INFO] [1746015845.465681696] [pose_estimation_client]: Orientation (quaternion): [0.0001, 0.9999, 0.0115, -0.0126]
 
+  target_pose.pose.position.x = 0.44292;
+  target_pose.pose.position.y =  0.66405;
+  target_pose.pose.position.z = -0.53904;
+  target_pose.pose.orientation.x = 0.0001;
+  target_pose.pose.orientation.y = 0.9999;
+  target_pose.pose.orientation.z = 0.0115;
+  target_pose.pose.orientation.w = -0.0126;
+  
   // Create a move to pose stage with the Cartesian planner
   auto stage_move_to_pose = std::make_unique<mtc::stages::MoveTo>("move to target pose", cartesian_planner);
   stage_move_to_pose->setGroup(arm_group_name);

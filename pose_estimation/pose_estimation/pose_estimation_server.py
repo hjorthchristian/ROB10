@@ -325,7 +325,63 @@ class RANSACSegmentationService(Node):
             # Highlight inliers for the best plane
             if best_plane_info is not None and best_object_id is not None:
                 self.get_logger().info(f"Selected object {best_object_id} with {best_plane_info['inlier_count']} inliers as best result")
-                
+                try:
+                    inlier_points = best_plane_info["inliers"]
+                    save_path = 'ransac_plane_points.txt'
+                    with open(save_path, 'w') as f:
+                        f.write(f"# RANSAC plane points for '{request.text_prompt}'\n")
+                        f.write(f"# Total points: {len(inlier_points)}\n")
+                        f.write("# x y z\n")
+                        for point in inlier_points:
+                            f.write(f"{point[0]:.6f} {point[1]:.6f} {point[2]:.6f}\n")
+                        
+                        # Add specific pixel coordinates for (625, 87)
+                        f.write("\n# Specific pixel (625, 87) coordinates:\n")
+                        specific_pixel = (625, 87)
+                        try:
+                            # Get depth value for this specific pixel (if it's within bounds)
+                            if (0 <= specific_pixel[1] < depth_copy.shape[0] and 
+                                0 <= specific_pixel[0] < depth_copy.shape[1]):
+                                
+                                depth_value_mm = depth_copy[specific_pixel[1], specific_pixel[0]]
+                                
+                                # Check if depth value is valid
+                                if depth_value_mm > 100 and depth_value_mm < 8000:
+                                    # Convert to meters
+                                    depth_m = depth_value_mm / 1000.0
+                                    
+                                    # Calculate 3D point in camera frame
+                                    X_cam = (specific_pixel[0] - self.cx) * depth_m / self.fx
+                                    Y_cam = (specific_pixel[1] - self.cy) * depth_m / self.fy
+                                    Z_cam = depth_m
+                                    
+                                    # Convert to 3D point in robot base frame
+                                    point_3d_camera = np.array([[X_cam, Y_cam, Z_cam]])
+                                    point_3d_robot = self.transform_points_to_robot_base(point_3d_camera)
+                                    
+                                    if point_3d_robot is not None and len(point_3d_robot) > 0:
+                                        f.write(f"# Pixel: (625, 87)\n")
+                                        f.write(f"# X_CAM: {X_cam:.6f} m\n")
+                                        f.write(f"# Y_CAM: {Y_cam:.6f} m\n")
+                                        f.write(f"# Z_CAM: {Z_cam:.6f} m\n")
+                                        f.write(f"# Depth: {depth_value_mm} mm\n")
+                                        f.write(f"# Robot base frame coordinates:\n")
+                                        f.write(f"# X: {point_3d_robot[0][0]:.6f}\n")
+                                        f.write(f"# Y: {point_3d_robot[0][1]:.6f}\n")
+                                        f.write(f"# Z: {point_3d_robot[0][2]:.6f}\n")
+                                    else:
+                                        f.write("# Could not transform point for pixel (625, 87)\n")
+                                else:
+                                    f.write(f"# Invalid depth value ({depth_value_mm} mm) for pixel (625, 87)\n")
+                            else:
+                                f.write("# Pixel (625, 87) is outside image bounds\n")
+                        except Exception as e_pixel:
+                            f.write(f"# Error processing pixel (625, 87): {str(e_pixel)}\n")
+                            self.get_logger().error(f"Error processing specific pixel: {e_pixel}")
+                            
+                    self.get_logger().info(f"Saved {len(inlier_points)} RANSAC plane points to {save_path}")
+                except Exception as e_save:
+                    self.get_logger().error(f"Error saving RANSAC plane points: {e_save}")
                 # Highlight inlier pixels
                 inlier_pixels = best_plane_info.get("inlier_pixels_xy")
                 if inlier_pixels is not None and len(inlier_pixels) > 0:
@@ -449,15 +505,24 @@ class RANSACSegmentationService(Node):
                 # Generate pose from the best plane center
                 center = best_plane_info["center"]
                 normal = best_plane_info["normal"]
+
+                self.get_logger().info(f'Normal Vector: {normal}')
+                
                 
                 # Generate a dummy orientation based on the plane normal
                 # In a real implementation, you would compute this from the plane orientation
                 dummy_orientation = [0.0, 0.0, 0.0, 1.0]  # Identity quaternion
+
+                self.get_logger().info(f'Dummy Orientation Quaternion: {dummy_orientation}')
+                orientation_quaternion = self.normal_to_quaternion(normal)
+
+                self.get_logger().info(f'Orientation Quaternion: {orientation_quaternion}')
+
                 
                 # Set response data
                 response_data["success"] = True
                 response_data["position"] = center.tolist()
-                response_data["orientation"] = dummy_orientation
+                response_data["orientation"] = orientation_quaternion
                 response_data["wrist_angle"] = 0.0  # Default value
                 
                 self.get_logger().info(f"Generated pose at position: ({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f})")
@@ -482,6 +547,8 @@ class RANSACSegmentationService(Node):
                 )
                 
                 # Save the image
+                
+
                 cv2.imwrite('box.png', cv2.cvtColor(visualized_image, cv2.COLOR_RGB2BGR))
                 self.get_logger().info("Saved visualization to box.png")
             except Exception as e_save:
@@ -579,13 +646,13 @@ class RANSACSegmentationService(Node):
         """Transform points from camera frame to robot base frame."""
         # IMPORTANT: VERIFY this static transform matrix for your setup!
         # This maps camera_color_optical_frame -> ur10_base_link (example)
-        transform_matrix = np.array([
-            [0.995, 0.095, 0.007, -0.510],
-            [0.095, -0.995, -0.005, 0.010],
-            [0.006, 0.006, -1.000, 1.110],
+        
+        transform_matrix  = np.array([
+            [0.995, 0.095, 0.007, 0.499],
+            [0.095, -0.995, -0.005, 0.065],
+            [0.006, 0.006, -1.000, 1.114],
             [0.000, 0.000, 0.000, 1.000]
         ])
-        
         # Store the transform matrix as instance variable for later use
         if not hasattr(self, 'camera_to_base_transform'):
             self.camera_to_base_transform = transform_matrix
@@ -601,10 +668,12 @@ class RANSACSegmentationService(Node):
         points_homogeneous = np.hstack((points_3d_camera, np.ones((n_points, 1))))
         # Apply transformation: P_base_hom = P_cam_hom @ T_cam_to_base^T
         transformed_points_homogeneous = points_homogeneous @ transform_matrix.T
-        # Return only the x, y, z coordinates
-        return transformed_points_homogeneous[:, :3]
+        transformed_points = transformed_points_homogeneous[:, :3]
 
-    def get_plane_info_ransac(self, points_3d, iterations=100, threshold=0.01):
+        # Return only the x, y, z coordinates
+        return transformed_points
+
+    def get_plane_info_ransac(self, points_3d, iterations=100, threshold=0.0025):
         """
         Calculates plane using RANSAC. Returns dict including inlier_indices relative to input points_3d.
         """
@@ -889,6 +958,116 @@ class RANSACSegmentationService(Node):
         self.get_logger().info(f"Created dummy SAM response with {num_objects} objects")
         return response
 
+    def normal_to_quaternion(self, normal, align_axis='z'):
+        """
+        Convert a normal vector to a quaternion representing orientation.
+        Ensures z-axis points downward relative to robot base frame.
+        
+        Args:
+            normal: Normal vector (numpy array)
+            align_axis: Which gripper axis to align with normal ('x', 'y', or 'z')
+            
+        Returns:
+            quaternion as [x, y, z, w]
+        """
+        # Normalize the vector
+        normal = np.array(normal, dtype=np.float64)
+        normal = normal / np.linalg.norm(normal)
+        
+        # Ensure z-axis points downward (negative z in base frame)
+        # If normal[2] is positive, flip the normal
+        if normal[2] > 0:
+            self.get_logger().info("Flipping normal to ensure downward orientation")
+            normal = -normal
+        
+        # Choose which axis of the gripper aligns with the normal
+        if align_axis == 'z':
+            z_axis = normal
+            
+            # Find a reference vector not parallel to z_axis
+            if abs(z_axis[0]) < abs(z_axis[1]) and abs(z_axis[0]) < abs(z_axis[2]):
+                ref = np.array([1, 0, 0])
+            elif abs(z_axis[1]) < abs(z_axis[2]):
+                ref = np.array([0, 1, 0])
+            else:
+                ref = np.array([0, 0, 1])
+            
+            # Create orthogonal axes
+            x_axis = np.cross(ref, z_axis)
+            x_axis = x_axis / np.linalg.norm(x_axis)
+            
+            y_axis = np.cross(z_axis, x_axis)
+            y_axis = y_axis / np.linalg.norm(y_axis)
+        
+        # Form the rotation matrix
+        rotation_matrix = np.column_stack((x_axis, y_axis, z_axis))
+        
+        # Convert to quaternion
+        quat = self.rotation_matrix_to_quaternion(rotation_matrix)
+        
+        # For debugging, convert to RPY and log it
+        rpy = self.quaternion_to_euler(quat)
+        self.get_logger().info(f"Orientation RPY (degrees): roll={rpy[0]:.2f}°, pitch={rpy[1]:.2f}°, yaw={rpy[2]:.2f}°")
+        
+        return quat
+
+    def quaternion_to_euler(self, quaternion):
+        """
+        Convert quaternion [x,y,z,w] to Euler angles [roll, pitch, yaw] in degrees.
+        Uses ZYX rotation order (yaw, pitch, roll).
+        """
+        x, y, z, w = quaternion
+        
+        # Roll (x-axis rotation)
+        sinr_cosp = 2 * (w * x + y * z)
+        cosr_cosp = 1 - 2 * (x * x + y * y)
+        roll = np.arctan2(sinr_cosp, cosr_cosp)
+        
+        # Pitch (y-axis rotation)
+        sinp = 2 * (w * y - z * x)
+        if abs(sinp) >= 1:
+            pitch = np.copysign(np.pi / 2, sinp)  # Use 90 degrees if out of range
+        else:
+            pitch = np.arcsin(sinp)
+        
+        # Yaw (z-axis rotation)
+        siny_cosp = 2 * (w * z + x * y)
+        cosy_cosp = 1 - 2 * (y * y + z * z)
+        yaw = np.arctan2(siny_cosp, cosy_cosp)
+        
+        # Convert to degrees
+        return [np.degrees(roll), np.degrees(pitch), np.degrees(yaw)]
+
+    def rotation_matrix_to_quaternion(self, R):
+        """Convert 3x3 rotation matrix to quaternion [x,y,z,w]."""
+        trace = R[0,0] + R[1,1] + R[2,2]
+        
+        if trace > 0:
+            S = 2.0 * np.sqrt(trace + 1.0)
+            qw = 0.25 * S
+            qx = (R[2,1] - R[1,2]) / S
+            qy = (R[0,2] - R[2,0]) / S
+            qz = (R[1,0] - R[0,1]) / S
+        elif R[0,0] > R[1,1] and R[0,0] > R[2,2]:
+            S = 2.0 * np.sqrt(1.0 + R[0,0] - R[1,1] - R[2,2])
+            qw = (R[2,1] - R[1,2]) / S
+            qx = 0.25 * S
+            qy = (R[0,1] + R[1,0]) / S
+            qz = (R[0,2] + R[2,0]) / S
+        elif R[1,1] > R[2,2]:
+            S = 2.0 * np.sqrt(1.0 + R[1,1] - R[0,0] - R[2,2])
+            qw = (R[0,2] - R[2,0]) / S
+            qx = (R[0,1] + R[1,0]) / S
+            qy = 0.25 * S
+            qz = (R[1,2] + R[2,1]) / S
+        else:
+            S = 2.0 * np.sqrt(1.0 + R[2,2] - R[0,0] - R[1,1])
+            qw = (R[1,0] - R[0,1]) / S
+            qx = (R[0,2] + R[2,0]) / S
+            qy = (R[1,2] + R[2,1]) / S
+            qz = 0.25 * S
+        
+        return [qx, qy, qz, qw]
 
 def main(args=None):
     rclpy.init(args=args)

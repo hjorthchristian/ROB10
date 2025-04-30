@@ -21,6 +21,7 @@
     ],
     "files.associations": {
         "*.ipp": "cpp",
-        "bitset": "cpp"
+        "bitset": "cpp",
+        "regex": "cpp"
     }
 }
