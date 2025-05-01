@@ -228,6 +228,10 @@ class RANSACSegmentationService(Node):
             # Make a copy of the images to avoid race conditions
             with self.image_lock:
                 rgb_copy = self.rgb_image.copy() if self.rgb_image is not None else None
+                cv2.imwrite('rgb.png', cv2.cvtColor(rgb_copy, cv2.COLOR_RGB2BGR))  # Save RGB image for debugging
+                #Set last 70% rows to black
+                rgb_copy[int(rgb_copy.shape[0] * 0.3):, :, :] = 0
+                #rgb_copy = rgb_copy[:int(rgb_copy.shape[0] * 0.3), :, :]
                 depth_copy = self.depth_image.copy() if self.depth_image is not None else None
             
             if rgb_copy is None or depth_copy is None:
@@ -325,63 +329,7 @@ class RANSACSegmentationService(Node):
             # Highlight inliers for the best plane
             if best_plane_info is not None and best_object_id is not None:
                 self.get_logger().info(f"Selected object {best_object_id} with {best_plane_info['inlier_count']} inliers as best result")
-                try:
-                    inlier_points = best_plane_info["inliers"]
-                    save_path = 'ransac_plane_points.txt'
-                    with open(save_path, 'w') as f:
-                        f.write(f"# RANSAC plane points for '{request.text_prompt}'\n")
-                        f.write(f"# Total points: {len(inlier_points)}\n")
-                        f.write("# x y z\n")
-                        for point in inlier_points:
-                            f.write(f"{point[0]:.6f} {point[1]:.6f} {point[2]:.6f}\n")
-                        
-                        # Add specific pixel coordinates for (625, 87)
-                        f.write("\n# Specific pixel (625, 87) coordinates:\n")
-                        specific_pixel = (625, 87)
-                        try:
-                            # Get depth value for this specific pixel (if it's within bounds)
-                            if (0 <= specific_pixel[1] < depth_copy.shape[0] and 
-                                0 <= specific_pixel[0] < depth_copy.shape[1]):
-                                
-                                depth_value_mm = depth_copy[specific_pixel[1], specific_pixel[0]]
-                                
-                                # Check if depth value is valid
-                                if depth_value_mm > 100 and depth_value_mm < 8000:
-                                    # Convert to meters
-                                    depth_m = depth_value_mm / 1000.0
-                                    
-                                    # Calculate 3D point in camera frame
-                                    X_cam = (specific_pixel[0] - self.cx) * depth_m / self.fx
-                                    Y_cam = (specific_pixel[1] - self.cy) * depth_m / self.fy
-                                    Z_cam = depth_m
-                                    
-                                    # Convert to 3D point in robot base frame
-                                    point_3d_camera = np.array([[X_cam, Y_cam, Z_cam]])
-                                    point_3d_robot = self.transform_points_to_robot_base(point_3d_camera)
-                                    
-                                    if point_3d_robot is not None and len(point_3d_robot) > 0:
-                                        f.write(f"# Pixel: (625, 87)\n")
-                                        f.write(f"# X_CAM: {X_cam:.6f} m\n")
-                                        f.write(f"# Y_CAM: {Y_cam:.6f} m\n")
-                                        f.write(f"# Z_CAM: {Z_cam:.6f} m\n")
-                                        f.write(f"# Depth: {depth_value_mm} mm\n")
-                                        f.write(f"# Robot base frame coordinates:\n")
-                                        f.write(f"# X: {point_3d_robot[0][0]:.6f}\n")
-                                        f.write(f"# Y: {point_3d_robot[0][1]:.6f}\n")
-                                        f.write(f"# Z: {point_3d_robot[0][2]:.6f}\n")
-                                    else:
-                                        f.write("# Could not transform point for pixel (625, 87)\n")
-                                else:
-                                    f.write(f"# Invalid depth value ({depth_value_mm} mm) for pixel (625, 87)\n")
-                            else:
-                                f.write("# Pixel (625, 87) is outside image bounds\n")
-                        except Exception as e_pixel:
-                            f.write(f"# Error processing pixel (625, 87): {str(e_pixel)}\n")
-                            self.get_logger().error(f"Error processing specific pixel: {e_pixel}")
-                            
-                    self.get_logger().info(f"Saved {len(inlier_points)} RANSAC plane points to {save_path}")
-                except Exception as e_save:
-                    self.get_logger().error(f"Error saving RANSAC plane points: {e_save}")
+                
                 # Highlight inlier pixels
                 inlier_pixels = best_plane_info.get("inlier_pixels_xy")
                 if inlier_pixels is not None and len(inlier_pixels) > 0:
@@ -502,28 +450,94 @@ class RANSACSegmentationService(Node):
                     # Convert back to RGB for final output
                     visualized_image = cv2.cvtColor(temp_vis_img_bgr, cv2.COLOR_BGR2RGB)
                 
-                # Generate pose from the best plane center
+                # Generate pose from the best plane
                 center = best_plane_info["center"]
                 normal = best_plane_info["normal"]
-
                 self.get_logger().info(f'Normal Vector: {normal}')
                 
-                
-                # Generate a dummy orientation based on the plane normal
-                # In a real implementation, you would compute this from the plane orientation
-                dummy_orientation = [0.0, 0.0, 0.0, 1.0]  # Identity quaternion
+                # NEW CODE: GRIPPER ALIGNMENT
+                # Check if we have valid 3D corners
+                if 'corners_3d' in locals() and corners_3d is not None and len(corners_3d) == 4:
+                    # Use our new alignment function
+                    aligned_position, orientation_quaternion, wrist_angle = self.align_gripper_with_box(corners_3d, normal)
+                    yaws = [0, np.pi/2, np.pi, 3*np.pi/2]
+                    quaternions = []
+                    for θ in yaws:
+                        q = self.quat_mul(orientation_quaternion, self.q_yaw(θ))
+                        quaternions.append(q)
 
-                self.get_logger().info(f'Dummy Orientation Quaternion: {dummy_orientation}')
-                orientation_quaternion = self.normal_to_quaternion(normal)
+                    # quaternions now holds four [x,y,z,w] arrays
+                    for i, q in enumerate(quaternions):
+                        self.get_logger().info(f"Gripper yaw={np.degrees(yaws[i]):3.0f}° → quaternion {q}")
 
-                self.get_logger().info(f'Orientation Quaternion: {orientation_quaternion}')
+                    self.get_logger().info(f'Aligned gripper with box vertices')
+                    self.get_logger().info(f'Aligned position: {aligned_position}')
+                    self.get_logger().info(f'Orientation quaternion: {orientation_quaternion}')
+                    self.get_logger().info(f'Wrist angle: {np.degrees(wrist_angle):.1f}°')
+                    
+                    # Use the aligned values
+                    center = aligned_position
+                else:
+                    # Fallback to normal-based orientation if corners are not available
+                    self.get_logger().warn('Could not find box corners for alignment, using normal-based orientation')
+                    orientation_quaternion = self.normal_to_quaternion(normal)
+                    wrist_angle = 0.0
 
-                
+                # ADD THIS NEW CODE HERE:
+                # Apply an offset of 2cm along the negative normal vector direction
+                # Note: We use negative normal because normal points into the surface
+                offset_distance = 0.02  # 2 cm offset
+                # Ensure normal is normalized
+                normal_direction = normal / np.linalg.norm(normal)
+                # Ensure normal points upward (negative Z in base frame is upward)
+                if normal_direction[2] > 0:
+                    normal_direction = -normal_direction
+                else:
+                    normal_direction = normal_direction
+                # Apply offset - move away from surface along normal
+                offset_vector = -normal_direction * offset_distance  # Negative to move away from surface
+                original_center = center.copy()
+                center = center + offset_vector
+                self.get_logger().info(f'Applied {offset_distance*100:.1f}cm offset along normal direction')
+                self.get_logger().info(f'Original position: {original_center}')
+                self.get_logger().info(f'New position with offset: {center}')
+
+                # Then continue with the original code:
                 # Set response data
                 response_data["success"] = True
                 response_data["position"] = center.tolist()
                 response_data["orientation"] = orientation_quaternion
-                response_data["wrist_angle"] = 0.0  # Default value
+                response_data["wrist_angle"] = wrist_angle
+                
+                # Add visualization of gripper alignment
+                try:
+                    # Project 3D aligned position back to 2D image
+                    center_3d = np.array([center])  # Make it 2D array for the function
+                    center_2d_points = self.project_3d_to_2d(center_3d)
+                    
+                    if center_2d_points is not None and len(center_2d_points) > 0:
+                        center_2d = center_2d_points[0]
+                        
+                        # Project box corners to 2D if needed
+                        if 'corners_3d' in locals() and corners_3d is not None:
+                            corners_2d_points = self.project_3d_to_2d(corners_3d)
+                            if corners_2d_points is not None and len(corners_2d_points) == 4:
+                                # Visualize gripper alignment
+                                visualized_image = self.visualize_gripper_alignment(
+                                    visualized_image, corners_2d_points, center_2d, 
+                                    orientation_quaternion, wrist_angle
+                                )
+                                self.get_logger().info("Added gripper visualization to output image")
+                            else:
+                                self.get_logger().warn("Could not project corners to 2D for visualization")
+                        else:
+                            self.get_logger().warn("No 3D corners available for visualization")
+                    else:
+                        self.get_logger().warn("Could not project center point to 2D")
+                except Exception as e_vis:
+                    self.get_logger().error(f"Error visualizing gripper: {e_vis}")
+                    import traceback
+                    self.get_logger().error(traceback.format_exc())
                 
                 self.get_logger().info(f"Generated pose at position: ({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f})")
             else:
@@ -547,8 +561,6 @@ class RANSACSegmentationService(Node):
                 )
                 
                 # Save the image
-                
-
                 cv2.imwrite('box.png', cv2.cvtColor(visualized_image, cv2.COLOR_RGB2BGR))
                 self.get_logger().info("Saved visualization to box.png")
             except Exception as e_save:
@@ -563,6 +575,192 @@ class RANSACSegmentationService(Node):
         
         # Signal that processing is complete
         response_ready.set()
+    
+    # --- GRIPPER ALIGNMENT FUNCTIONS ---
+    
+    def align_gripper_with_box(self, corners_3d, normal):
+        """
+        Compute an aligned gripper pose for a detected box.
+
+        Args:
+            corners_3d: List of 4 corner points (3D) of the box 
+                        [top_left, top_right, bottom_left, bottom_right].
+            normal:     Normal vector of the box’s plane (3D).
+
+        Returns:
+            tuple: (position, orientation, wrist_angle)
+                position:    [x, y, z] center of the box (gripper target position).
+                orientation: [x, y, z, w] quaternion for gripper orientation aligned with the box.
+                wrist_angle: rotation around gripper’s z-axis (radians) for any needed in-plane adjustment.
+        """
+        # Ensure we have exactly 4 corners
+        if corners_3d is None or len(corners_3d) != 4:
+            self.get_logger().error("Cannot align gripper: need 4 corners")
+            return None, None, 0.0
+
+        # Extract named corners for clarity
+        top_left, top_right, bottom_left, bottom_right = corners_3d
+
+        # Compute edge vectors along the box’s plane
+        width_vector = top_right - top_left        # Vector along one box edge
+        height_vector = bottom_left - top_left     # Vector along the orthogonal box edge
+
+        # Compute the dimensions (lengths) of the box edges (for logging or reference)
+        width = np.linalg.norm(width_vector)
+        height = np.linalg.norm(height_vector)
+        self.get_logger().info(f"Box dimensions: width={width:.4f} m, height={height:.4f} m")
+
+        # Compute the geometric center of the box (mean of corner points)
+        center = np.mean(corners_3d, axis=0)
+
+        # Define orthonormal axes for the gripper’s frame aligned with the box
+        # X-axis: along the box's width edge (normalized)
+        x_axis = width_vector / np.linalg.norm(width_vector)
+        # Z-axis: align with plane normal (pointing downward toward the box)
+        z_axis = normal / np.linalg.norm(normal)
+        if z_axis[2] > 0:
+            z_axis = -z_axis  # Flip if normal is pointing upward, so gripper faces down onto the box
+        # Y-axis: perpendicular to both Z and X (cross product to get orthonormal axis in plane)
+        y_axis = np.cross(z_axis, x_axis)
+        y_axis = y_axis / np.linalg.norm(y_axis)
+        # Recompute X-axis to ensure exact orthogonality (in case original X was not perfectly perpendicular to Z)
+        x_axis = np.cross(y_axis, z_axis)
+
+        # Construct rotation matrix from the orthonormal axes
+        rotation_matrix = np.column_stack((x_axis, y_axis, z_axis))
+        # Convert rotation matrix to quaternion (x, y, z, w)
+        orientation_quat = self.rotation_matrix_to_quaternion(rotation_matrix)
+
+        # For a square gripper, no additional in-plane rotation is needed to align with the box’s edges
+        wrist_angle = 0.0
+
+        # Log the results for debugging
+        self.get_logger().info(f"Gripper alignment computed: center={center}, orientation_quat={orientation_quat}, wrist_angle={np.degrees(wrist_angle):.1f}°")
+
+        return center, orientation_quat, wrist_angle
+
+
+    def project_3d_to_2d(self, points_3d):
+        """Project 3D points in robot base frame back to camera 2D pixels"""
+        points_3d = np.asarray(points_3d)
+        if points_3d.ndim == 1:
+            points_3d = points_3d.reshape(1, 3)
+        
+        # Add homogeneous coordinate
+        points_homogeneous = np.hstack((points_3d, np.ones((len(points_3d), 1))))
+        
+        # Transform from robot base to camera frame
+        # Use inverse of camera_to_base_transform
+        camera_transform = np.linalg.inv(self.camera_to_base_transform)
+        camera_points = points_homogeneous @ camera_transform.T
+        
+        # Project 3D points to 2D using camera intrinsics
+        pixels = []
+        for point in camera_points:
+            # Convert to camera coordinates
+            x_cam, y_cam, z_cam = point[:3]
+            
+            # Skip points behind the camera
+            if z_cam <= 0:
+                continue
+                
+            # Project to pixel coordinates
+            u = int(self.fx * x_cam / z_cam + self.cx)
+            v = int(self.fy * y_cam / z_cam + self.cy)
+            pixels.append([u, v])
+        
+        return np.array(pixels)
+
+    def visualize_gripper_alignment(self, img, corners_2d, center_2d, orientation_quat, wrist_angle=0.0):
+        """
+        Visualize gripper alignment on the 2D image
+        
+        Args:
+            img: RGB image to visualize on
+            corners_2d: 2D box corners [top_left, top_right, bottom_left, bottom_right]
+            center_2d: 2D center point
+            orientation_quat: Orientation quaternion [x, y, z, w]
+            wrist_angle: Gripper wrist angle in radians
+        
+        Returns:
+            RGB image with gripper overlay
+        """
+        # Convert to BGR for OpenCV
+        vis_img = cv2.cvtColor(img.copy(), cv2.COLOR_RGB2BGR)
+        
+        # Draw the box corners and center
+        for corner in corners_2d:
+            cv2.circle(vis_img, tuple(map(int, corner)), 5, (0, 255, 255), -1)
+        
+        cx, cy = map(int, center_2d)
+        cv2.circle(vis_img, (cx, cy), 7, (0, 0, 255), -1)
+        
+        # Convert quaternion to rotation matrix to get axes
+        qx, qy, qz, qw = orientation_quat
+        rot_matrix = np.zeros((3, 3))
+        
+        # Quaternion to rotation matrix conversion
+        rot_matrix[0, 0] = 1 - 2 * (qy**2 + qz**2)
+        rot_matrix[0, 1] = 2 * (qx*qy - qz*qw)
+        rot_matrix[0, 2] = 2 * (qx*qz + qy*qw)
+        rot_matrix[1, 0] = 2 * (qx*qy + qz*qw)
+        rot_matrix[1, 1] = 1 - 2 * (qx**2 + qz**2)
+        rot_matrix[1, 2] = 2 * (qy*qz - qx*qw)
+        rot_matrix[2, 0] = 2 * (qx*qz - qy*qw)
+        rot_matrix[2, 1] = 2 * (qy*qz + qx*qw)
+        rot_matrix[2, 2] = 1 - 2 * (qx**2 + qy**2)
+        
+        # Apply additional wrist rotation if needed
+        if abs(wrist_angle) > 0.001:
+            # Create rotation matrix for wrist angle (rotation around Z-axis)
+            cos_a = np.cos(wrist_angle)
+            sin_a = np.sin(wrist_angle)
+            wrist_rot = np.array([
+                [cos_a, -sin_a, 0],
+                [sin_a, cos_a, 0],
+                [0, 0, 1]
+            ])
+            # Apply to the rotation matrix
+            rot_matrix = rot_matrix @ wrist_rot
+        
+        # Extract axes
+        x_axis = rot_matrix[:, 0]
+        y_axis = rot_matrix[:, 1]
+        
+        # Scale for visualization (assume gripper is 15 units wide)
+        gripper_half_size = 7.5
+        scale = 30  # Pixels per unit
+        
+        # Calculate gripper corners in 2D image space
+        gripper_corners = []
+        gripper_corners.append((cx + int(scale * (x_axis[0] * gripper_half_size + y_axis[0] * gripper_half_size)), 
+                               cy + int(scale * (x_axis[1] * gripper_half_size + y_axis[1] * gripper_half_size))))
+        gripper_corners.append((cx + int(scale * (x_axis[0] * gripper_half_size - y_axis[0] * gripper_half_size)), 
+                               cy + int(scale * (x_axis[1] * gripper_half_size - y_axis[1] * gripper_half_size))))
+        gripper_corners.append((cx + int(scale * (-x_axis[0] * gripper_half_size - y_axis[0] * gripper_half_size)), 
+                               cy + int(scale * (-x_axis[1] * gripper_half_size - y_axis[1] * gripper_half_size))))
+        gripper_corners.append((cx + int(scale * (-x_axis[0] * gripper_half_size + y_axis[0] * gripper_half_size)), 
+                               cy + int(scale * (-x_axis[1] * gripper_half_size - y_axis[1] * gripper_half_size))))
+        
+        # Draw gripper outline
+        for i in range(4):
+            cv2.line(vis_img, gripper_corners[i], gripper_corners[(i+1)%4], (0, 255, 0), 2)
+        
+        # Draw axes for clarity
+        axis_length = 50
+        cv2.line(vis_img, (cx, cy), 
+                (cx + int(x_axis[0] * axis_length), cy + int(x_axis[1] * axis_length)), 
+                (255, 0, 0), 2)  # X-axis in blue
+        cv2.line(vis_img, (cx, cy), 
+                (cx + int(y_axis[0] * axis_length), cy + int(y_axis[1] * axis_length)), 
+                (0, 255, 0), 2)  # Y-axis in green
+        
+        # Add legend
+        cv2.putText(vis_img, "Gripper", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(vis_img, f"Wrist Angle: {np.degrees(wrist_angle):.1f}°", (20, 60), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+        return cv2.cvtColor(vis_img, cv2.COLOR_BGR2RGB)
     
     # --- RANSAC and Point Cloud Functions ---
     
@@ -673,7 +871,7 @@ class RANSACSegmentationService(Node):
         # Return only the x, y, z coordinates
         return transformed_points
 
-    def get_plane_info_ransac(self, points_3d, iterations=100, threshold=0.0025):
+    def get_plane_info_ransac(self, points_3d, iterations=100, threshold=0.0075):
         """
         Calculates plane using RANSAC. Returns dict including inlier_indices relative to input points_3d.
         """
@@ -749,64 +947,6 @@ class RANSACSegmentationService(Node):
         }
         return result
     
-    # --- Service and SAM-related Functions ---
-    
-    def call_langsam_service_async(self, ros_img, text_prompt):
-        """Asynchronous call to the LangSAM segmentation service."""
-        request = SegmentImage.Request()
-        request.image = ros_img
-        request.text_prompt = text_prompt
-        # Default confidence threshold
-        request.confidence_threshold = 0.35
-        
-        # Check service availability
-        if not self.lang_sam_client.service_is_ready():
-            self.get_logger().warn('SAM service not ready, waiting briefly...')
-            ready = self.lang_sam_client.wait_for_service(timeout_sec=2.0)
-            if not ready:
-                self.get_logger().error('SAM service not available after waiting')
-                return None
-        
-        self.get_logger().info(f'Sending request to SAM service for prompt: "{text_prompt}"')
-        
-        try:
-            # Use async call that doesn't block the thread
-            future = self.lang_sam_client.call_async(request)
-            return future
-        except Exception as e:
-            self.get_logger().error(f'Error starting SAM service call: {e}')
-            return None
-    
-    def wait_for_future(self, future, timeout=10.0):
-        """Wait for a future to complete with timeout, without blocking ROS spinning."""
-        if future is None:
-            self.get_logger().error("Cannot wait for None future")
-            return None
-            
-        # Wait for future with timeout
-        start_time = time.time()
-        self.get_logger().info(f"Waiting for SAM service response (timeout: {timeout}s)...")
-        
-        # Print periodic progress updates while waiting
-        while not future.done() and time.time() - start_time < timeout:
-            elapsed = time.time() - start_time
-            if int(elapsed) % 2 == 0:  # Print every 2 seconds
-                self.get_logger().info(f"Still waiting for SAM response... ({elapsed:.1f}s)")
-            # Sleep briefly to avoid CPU spinning
-            time.sleep(0.1)
-        
-        if not future.done():
-            self.get_logger().error(f'SAM service did not respond within {timeout} seconds')
-            return None
-            
-        try:
-            self.get_logger().info(f"SAM future completed after {time.time() - start_time:.2f}s")
-            result = future.result()
-            return result
-        except Exception as e:
-            self.get_logger().error(f'SAM service future raised an exception: {e}')
-            return None
-
     def project_pixels_to_plane(self, pixel_points, plane_normal, plane_point):
         """
         Project 2D pixel points onto the 3D plane using ray-plane intersection.
@@ -884,7 +1024,65 @@ class RANSACSegmentationService(Node):
             return None
             
         return np.array(projected_points_3d)
+    
+    # --- Service and SAM-related Functions ---
+    
+    def call_langsam_service_async(self, ros_img, text_prompt):
+        """Asynchronous call to the LangSAM segmentation service."""
+        request = SegmentImage.Request()
+        request.image = ros_img
+        request.text_prompt = text_prompt
+        # Default confidence threshold
+        request.confidence_threshold = 0.35
         
+        # Check service availability
+        if not self.lang_sam_client.service_is_ready():
+            self.get_logger().warn('SAM service not ready, waiting briefly...')
+            ready = self.lang_sam_client.wait_for_service(timeout_sec=2.0)
+            if not ready:
+                self.get_logger().error('SAM service not available after waiting')
+                return None
+        
+        self.get_logger().info(f'Sending request to SAM service for prompt: "{text_prompt}"')
+        
+        try:
+            # Use async call that doesn't block the thread
+            future = self.lang_sam_client.call_async(request)
+            return future
+        except Exception as e:
+            self.get_logger().error(f'Error starting SAM service call: {e}')
+            return None
+    
+    def wait_for_future(self, future, timeout=10.0):
+        """Wait for a future to complete with timeout, without blocking ROS spinning."""
+        if future is None:
+            self.get_logger().error("Cannot wait for None future")
+            return None
+            
+        # Wait for future with timeout
+        start_time = time.time()
+        self.get_logger().info(f"Waiting for SAM service response (timeout: {timeout}s)...")
+        
+        # Print periodic progress updates while waiting
+        while not future.done() and time.time() - start_time < timeout:
+            elapsed = time.time() - start_time
+            if int(elapsed) % 2 == 0:  # Print every 2 seconds
+                self.get_logger().info(f"Still waiting for SAM response... ({elapsed:.1f}s)")
+            # Sleep briefly to avoid CPU spinning
+            time.sleep(0.1)
+        
+        if not future.done():
+            self.get_logger().error(f'SAM service did not respond within {timeout} seconds')
+            return None
+            
+        try:
+            self.get_logger().info(f"SAM future completed after {time.time() - start_time:.2f}s")
+            result = future.result()
+            return result
+        except Exception as e:
+            self.get_logger().error(f'SAM service future raised an exception: {e}')
+            return None
+
     def simulate_sam_response(self):
         """Create a dummy SAM response for testing when real SAM service unavailable."""
         self.get_logger().info("Creating simulated SAM response...")
@@ -1068,6 +1266,21 @@ class RANSACSegmentationService(Node):
             qz = 0.25 * S
         
         return [qx, qy, qz, qw]
+
+    def q_yaw(self, theta):
+        # Quaternion for rotation about local z-axis by θ:
+        #    q = [x, y, z, w] = [0, 0, sin(θ/2), cos(θ/2)]
+        return np.array([0.0, 0.0, np.sin(theta/2), np.cos(theta/2)])
+    def quat_mul(self, q, r):
+        x1,y1,z1,w1 = q
+        x2,y2,z2,w2 = r
+        # Hamilton product r ⊗ q (first q, then r)
+        return np.array([
+            w1*x2 + x1*w2 + y1*z2 - z1*y2,
+            w1*y2 - x1*z2 + y1*w2 + z1*x2,
+            w1*z2 + x1*y2 - y1*x2 + z1*w2,
+            w1*w2 - x1*x2 - y1*y2 - z1*z2
+        ])
 
 def main(args=None):
     rclpy.init(args=args)

@@ -74,7 +74,7 @@ class PoseEstimationClient(Node):
 
 def main():
     parser = argparse.ArgumentParser(description='Client for pose estimation service')
-    parser.add_argument('--prompt', type=str, default='box', help='Text prompt for segmentation')
+    parser.add_argument('--prompt', type=str, default='big box on top middle', help='Text prompt for segmentation')
     
     args, unknown = parser.parse_known_args()
     
