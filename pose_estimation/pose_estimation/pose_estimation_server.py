@@ -210,11 +210,17 @@ class RANSACSegmentationService(Node):
                 response.position.x = response_data["position"][0]
                 response.position.y = response_data["position"][1]
                 response.position.z = response_data["position"][2]
-                response.orientation.x = response_data["orientation"][0]
-                response.orientation.y = response_data["orientation"][1]
-                response.orientation.z = response_data["orientation"][2]
-                response.orientation.w = response_data["orientation"][3]
-                response.wrist_angle = response_data["wrist_angle"]
+
+                response.orientations = []
+                for quat in response_data["orientations"]:
+                    orientation = Quaternion()
+                    orientation.x = quat[0]
+                    orientation.y = quat[1]
+                    orientation.z = quat[2]
+                    orientation.w = quat[3]
+                    response.orientations.append(orientation)
+
+                #response.wrist_angle = response_data["wrist_angle"]
                 
                 self.get_logger().info(f'Successfully generated pose response')
         
@@ -230,7 +236,16 @@ class RANSACSegmentationService(Node):
                 rgb_copy = self.rgb_image.copy() if self.rgb_image is not None else None
                 cv2.imwrite('rgb.png', cv2.cvtColor(rgb_copy, cv2.COLOR_RGB2BGR))  # Save RGB image for debugging
                 #Set last 70% rows to black
+                
+                rgb_copy = self.rgb_image.copy() if self.rgb_image is not None else None
                 rgb_copy[int(rgb_copy.shape[0] * 0.3):, :, :] = 0
+                # Set top 30% to black (keep bottom 70%)
+                #rgb_copy[:int(rgb_copy.shape[0] * 0.3), :, :] = 0
+
+                # Set left 50% to black (keep right 50%)
+                #rgb_copy[:, :int(rgb_copy.shape[1] * 0.5), :] = 0
+
+               
                 #rgb_copy = rgb_copy[:int(rgb_copy.shape[0] * 0.3), :, :]
                 depth_copy = self.depth_image.copy() if self.depth_image is not None else None
             
@@ -506,8 +521,8 @@ class RANSACSegmentationService(Node):
                 # Set response data
                 response_data["success"] = True
                 response_data["position"] = center.tolist()
-                response_data["orientation"] = orientation_quaternion
-                response_data["wrist_angle"] = wrist_angle
+                response_data["orientations"] = quaternions
+                #response_data["wrist_angle"] = wrist_angle
                 
                 # Add visualization of gripper alignment
                 try:
@@ -523,11 +538,7 @@ class RANSACSegmentationService(Node):
                             corners_2d_points = self.project_3d_to_2d(corners_3d)
                             if corners_2d_points is not None and len(corners_2d_points) == 4:
                                 # Visualize gripper alignment
-                                visualized_image = self.visualize_gripper_alignment(
-                                    visualized_image, corners_2d_points, center_2d, 
-                                    orientation_quaternion, wrist_angle
-                                )
-                                self.get_logger().info("Added gripper visualization to output image")
+                                self.get_logger().info("3D Corners available")
                             else:
                                 self.get_logger().warn("Could not project corners to 2D for visualization")
                         else:

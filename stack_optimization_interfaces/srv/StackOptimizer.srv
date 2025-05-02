@@ -1,0 +1,14 @@
+#Request
+int32 width
+int32 length
+int32 height #optional
+geometry_msgs/Quaternion orientation 
+bool change_stack_allowed # if user wants to change the current order of stacked boxes to optimize
+
+---
+#Response
+bool success 
+geometry_msgs/Point position 
+geometry_msgs/Quaternion[] orientations 
+int32 x_dimension
+int32 y_dimension

@@ -115,13 +115,14 @@ mtc::Task MTCTaskNode::createTask()
   // 0.9974, -0.0416, -0.0162, -0.0574  0.773, -0.634, -0.018, -0.025
   //0.2978, 0.7911, -0.7881   q 0.99891694, 0.04465121, -0.01301056, -0.00139677
   // 0.30969811  0.81748023 -0.76885791
+  // 0.21287062  0.75777652 -0.76993087 q 0.99733419  0.07173316 -0.01123506 -0.00725488
   target_pose.pose.position.x = 0.30969811;
   target_pose.pose.position.y =  0.81748023;
   target_pose.pose.position.z = -0.76885791;
-  target_pose.pose.orientation.x = 0.99891694;
-  target_pose.pose.orientation.y = 0.04465121;
-  target_pose.pose.orientation.z = -0.01301056;
-  target_pose.pose.orientation.w = -0.00139677;
+  target_pose.pose.orientation.x = 0.99733419 ;
+  target_pose.pose.orientation.y = 0.07173316;
+  target_pose.pose.orientation.z = -0.01123506;
+  target_pose.pose.orientation.w = -0.00725488;
   
   // Create a move to pose stage with the Cartesian planner
   auto stage_move_to_pose = std::make_unique<mtc::stages::MoveTo>("move to target pose", cartesian_planner);

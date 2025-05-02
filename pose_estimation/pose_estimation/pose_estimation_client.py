@@ -58,8 +58,12 @@ class PoseEstimationClient(Node):
                 # Print pose information
                 self.get_logger().info('Grasp pose information:')
                 self.get_logger().info(f'Position: [{response.position.x:.4f}, {response.position.y:.4f}, {response.position.z:.4f}]')
-                self.get_logger().info(f'Orientation (quaternion): [{response.orientation.x:.4f}, {response.orientation.y:.4f}, {response.orientation.z:.4f}, {response.orientation.w:.4f}]')
-                self.get_logger().info(f'Wrist angle: {response.wrist_angle:.4f} rad ({np.degrees(response.wrist_angle):.2f} deg)')
+                for i, orientation in enumerate(response.orientations):
+                    yaw_angle = i * 90  # 0, 90, 180, 270 degrees
+                    self.get_logger().info(f'Orientation {i+1} (yaw={yaw_angle}°): '
+                                        f'[{orientation.x:.4f}, {orientation.y:.4f}, '
+                                        f'{orientation.z:.4f}, {orientation.w:.4f}]')
+                
                 
             else:
                 self.get_logger().error(f'Service failed: {response.error_message}')
@@ -74,7 +78,7 @@ class PoseEstimationClient(Node):
 
 def main():
     parser = argparse.ArgumentParser(description='Client for pose estimation service')
-    parser.add_argument('--prompt', type=str, default='big box on top middle', help='Text prompt for segmentation')
+    parser.add_argument('--prompt', type=str, default='box in the top middle', help='Text prompt for segmentation')
     
     args, unknown = parser.parse_known_args()
     
