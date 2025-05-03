@@ -19,6 +19,8 @@ find_package(std_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/StackOptimizer.srv"
+  "msg/BoxInfo.msg"
+  "msg/BoxState.msg"
   DEPENDENCIES sensor_msgs geometry_msgs std_msgs
 )
 

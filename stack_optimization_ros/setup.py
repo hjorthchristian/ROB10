@@ -22,6 +22,7 @@ setup(
         'console_scripts': [
             'stack_optimizer_client = stack_optimization_ros.stack_optimizer_client:main',
             'stack_optimizer_server = stack_optimization_ros.stack_optimizer_server:main',
+            'stack_optimizer_visualization = stack_optimization_ros.stack_optimizer_visualization:main',
         ],
     },
 )
