@@ -122,40 +122,51 @@ class BoxStackVisualizer(Node):
         y = box.y
         z = box.z
         
-        # Log coordinates for debugging
         self.get_logger().info(f"Plotting box {box.id}: pos=({x},{y},{z}), dims=({width},{length},{height})")
         
-        # Create quaternion from the orientation - convert to proper format
-        # The server uses [x,y,z,w] format internally but ROS messages use [w,x,y,z]
-        quat = [box.orientation.w, box.orientation.x, box.orientation.y, box.orientation.z]
-        
         # Define the vertices of the box before rotation (relative to box corner)
-        verts_local = [
-            [0, 0, 0],                # bottom front left
-            [length, 0, 0],           # bottom front right - length along X-axis
-            [length, width, 0],       # bottom back right
-            [0, width, 0],            # bottom back left - width along Y-axis
-            [0, 0, height],           # top front left
-            [length, 0, height],      # top front right
-            [length, width, height],  # top back right
-            [0, width, height],       # top back left
-]
+        # Using the same vertex order as the server for consistency
+        verts = [
+            [x, y, z],                           # bottom front left
+            [x + length, y, z],                  # bottom front right
+            [x + length, y + width, z],          # bottom back right
+            [x, y + width, z],                   # bottom back left
+            [x, y, z + height],                  # top front left
+            [x + length, y, z + height],         # top front right
+            [x + length, y + width, z + height], # top back right
+            [x, y + width, z + height],          # top back left
+        ]
         
-        # Convert quaternion to rotation matrix
-        rotation_matrix = quat2mat(quat)
-        
-        # Apply rotation to each vertex and add the box position
-        verts = []
-        for v in verts_local:
-            # Apply rotation
-            v_rotated = np.dot(rotation_matrix, v)
-            # Add box position
-            v_positioned = [
-                x + v_rotated[0],
-                y + v_rotated[1],
-                z + v_rotated[2]
-            ]
-            verts.append(v_positioned)
+        # Only apply quaternion rotation if it's not the identity quaternion
+        # Check if we have a non-identity quaternion
+        quat = [box.orientation.w, box.orientation.x, box.orientation.y, box.orientation.z]
+        if not np.isclose(quat[0], 1.0) or not np.allclose(quat[1:], [0, 0, 0]):
+            # We have a real rotation to apply
+            self.get_logger().info(f"Applying rotation: w={quat[0]}, x={quat[1]}, y={quat[2]}, z={quat[3]}")
+            
+            # Convert quaternion to rotation matrix
+            rotation_matrix = quat2mat(quat)
+            
+            # Box center before rotation (for rotation around center)
+            center = np.array([
+                x + length/2,
+                y + width/2,
+                z + height/2
+            ])
+            
+            # Apply rotation around box center
+            rotated_verts = []
+            for v in verts:
+                v_array = np.array(v)
+                # Vector from center to vertex
+                v_centered = v_array - center
+                # Apply rotation
+                v_rotated = np.dot(rotation_matrix, v_centered)
+                # Translate back
+                v_final = v_rotated + center
+                rotated_verts.append(v_final.tolist())
+            
+            verts = rotated_verts
         
         # Get consistent color for this box ID
         box_color = self.get_box_color(box.id)
@@ -170,24 +181,23 @@ class BoxStackVisualizer(Node):
             [verts[3], verts[0], verts[4], verts[7]],  # left
         ]
         
+        self.get_logger().info(f"Box {box.id} vertices: {verts}")
+        self.get_logger().info(f"Box {box.id} faces: {faces}")
+        
         # Plot the box using Poly3DCollection
         collection = Poly3DCollection(faces, facecolors=box_color, edgecolors='k', alpha=0.7)
         self.ax.add_collection3d(collection)
         
         # Add box ID label near the top center of the box
-        # Apply rotation to find the actual center top
-        center_top_local = [width/2, length/2, height]
-        center_top_rotated = np.dot(rotation_matrix, center_top_local)
-        label_x = x + center_top_rotated[0]
-        label_y = y + center_top_rotated[1]
-        label_z = z + center_top_rotated[2]
+        label_x = x + length/2
+        label_y = y + width/2
+        label_z = z + height
         
         label = self.ax.text(label_x, label_y, label_z, f"ID: {box.id}", 
                         color='black', backgroundcolor=box_color, 
                         fontweight='bold', fontsize=10)
         
         return collection, label
-
     def setup_plot(self):
         """Setup the 3D plot with labels and limits"""
         self.ax.set_xlabel('X')

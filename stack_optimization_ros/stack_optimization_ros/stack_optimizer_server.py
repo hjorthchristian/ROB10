@@ -495,6 +495,9 @@ class BoxStackOptimizer:
         # Plot each box
         for i, box in enumerate(self.placed_boxes):
             x, y, z, l, w, h, _ = box
+
+            #Log dimensions and properties
+            print(f'Box {i}: Position ({x}, {y}, {z}), Size ({l}, {w}, {h})')
             
             # Plot the box
             self._plot_box(self.ax, (x, y, z), (l, w, h), cmap(i))
@@ -537,6 +540,8 @@ class BoxStackOptimizer:
             [verts[2], verts[3], verts[7], verts[6]],  # back
             [verts[3], verts[0], verts[4], verts[7]],  # left
         ]
+        print(f'Box vertices: {verts}')
+        print(f'Box faces: {faces}')
         
         # Create poly collection
         collection = Poly3DCollection(faces, facecolors=color, edgecolors='k', alpha=0.8)
