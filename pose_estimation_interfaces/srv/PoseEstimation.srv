@@ -7,3 +7,6 @@ bool success
 string error_message               
 geometry_msgs/Point position      
 geometry_msgs/Quaternion[] orientations 
+int32 x_width
+int32 y_length
+int32 z_height

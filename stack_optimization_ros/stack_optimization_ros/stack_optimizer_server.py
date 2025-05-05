@@ -17,6 +17,8 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import matplotlib.cm as cm
 from stack_optimization_interfaces.msg import BoxState, BoxInfo
 from std_msgs.msg import Header
+from transforms3d.quaternions import mat2quat
+from transforms3d.euler import euler2mat
 
 class BoxStackOptimizer:
     def __init__(self, pallet_x=80, pallet_y=60, max_height=100, margin=5):
@@ -622,10 +624,8 @@ class BoxStackService(Node):
         # Z-axis is the cross product
         z_axis_normalized = np.cross(x_axis_normalized, y_axis_normalized)
         z_axis_normalized = z_axis_normalized / np.linalg.norm(z_axis_normalized)
+
         
-        # Store pallet dimensions in meters
-        self.pallet_x_dimension = np.linalg.norm(x_axis)  # meters
-        self.pallet_y_dimension = np.linalg.norm(y_axis)  # meters
         
         # Calculate scaling factors from optimizer units to meters
         # Optimizer uses a 4×2 pallet in its internal units
@@ -653,7 +653,192 @@ class BoxStackService(Node):
         
         # Ensure an empty visualization is shown at startup to confirm visualization is working
         #self.optimizer.visualize_stack()
+
+    def create_pallet_aligned_orientations(self, pallet_x_axis, pallet_y_axis, pallet_z_axis):
+        """
+        Create orientations where gripper is explicitly aligned with pallet coordinates:
+        - Gripper's X-axis aligns with pallet's X-axis
+        - Gripper's Y-axis aligns with pallet's Y-axis
+        - Gripper's Z-axis points downward (opposite of pallet's Z-axis)
+        
+        Args:
+            pallet_x_axis: Normalized X-axis of the pallet coordinate system
+            pallet_y_axis: Normalized Y-axis of the pallet coordinate system
+            pallet_z_axis: Normalized Z-axis of the pallet coordinate system
+        
+        Returns:
+            List of quaternion options with different yaw rotations
+        """
+        # Normalize all input axes to be safe
+        pallet_x_axis = pallet_x_axis / np.linalg.norm(pallet_x_axis)
+        pallet_y_axis = pallet_y_axis / np.linalg.norm(pallet_y_axis)
+        pallet_z_axis = pallet_z_axis / np.linalg.norm(pallet_z_axis)
+        
+        # 1. Set gripper X-axis to align with pallet X-axis
+        gripper_x = pallet_x_axis.copy()
+        
+        # 2. Set gripper Y-axis to align with pallet Y-axis
+        gripper_y = pallet_y_axis.copy()
+        
+        # 3. Set gripper Z-axis to point downward (opposite pallet Z-axis)
+        gripper_z = -pallet_z_axis.copy()
+        
+        # Create rotation matrix from these axes
+        rotation_matrix = np.column_stack((gripper_x, gripper_y, gripper_z))
+        
+        # Verify orthogonality (should be close to identity matrix)
+        check = np.round(rotation_matrix.T @ rotation_matrix, 5)
+        print("Orthogonality check:\n", check)
+        
+        # Convert to quaternion
+        base_quat = mat2quat(rotation_matrix)
+        
+        # Generate 4 quaternion options with different yaw rotations
+        yaws = [0, np.pi/2, np.pi, 3*np.pi/2]
+        quaternion_options = []
+        
+        # Define helper functions for quaternion operations
+        def q_yaw(theta):
+            return np.array([0.0, 0.0, np.sin(theta/2), np.cos(theta/2)])
+        
+        def quat_mul(q, r):
+            x1, y1, z1, w1 = q
+            x2, y2, z2, w2 = r
+            return np.array([
+                w1*x2 + x1*w2 + y1*z2 - z1*y2,
+                w1*y2 - x1*z2 + y1*w2 + z1*x2,
+                w1*z2 + x1*y2 - y1*x2 + z1*w2,
+                w1*w2 - x1*x2 - y1*y2 - z1*z2
+            ])
+        
+        # Generate options with different yaw rotations
+        for θ in yaws:
+            q = quat_mul(base_quat, q_yaw(θ))
+            quaternion_options.append(q)
+            print(f"Quaternion with yaw {np.degrees(θ):.1f}°:", q)
+        
+        return quaternion_options
+
+    def create_fixed_gripper_orientations(self):
+        """
+        Create gripper orientations with fixed orientation where:
+        - z-axis is pointing downward (in world frame)
+        - x-axis is aligned with pallet x-axis
+        - y-axis completes the right-handed coordinate system
+        """
+        # Create a rotation matrix where:
+        # 1. Gripper z-axis points along global -Z (downward)
+        # 2. Gripper x-axis points along global X
+        # 3. Gripper y-axis is determined by the right-hand rule
+        
+        # Define exact gripper axes in world frame
+        gripper_z_in_world = np.array([0, 0, -1])  # Points downward
+        gripper_x_in_world = np.array([1, 0, 0])   # Points in global X direction
+        
+        # Make sure x is perpendicular to z
+        gripper_x_in_world = gripper_x_in_world - np.dot(gripper_x_in_world, gripper_z_in_world) * gripper_z_in_world
+        gripper_x_in_world = gripper_x_in_world / np.linalg.norm(gripper_x_in_world)
+        
+        # Create y using the right-hand rule
+        gripper_y_in_world = np.cross(gripper_z_in_world, gripper_x_in_world)
+        
+        # Create rotation matrix with explicit columns
+        rotation_matrix = np.column_stack((gripper_x_in_world, gripper_y_in_world, gripper_z_in_world))
+        
+        # Convert to quaternion
+        base_quaternion = mat2quat(rotation_matrix)
+        
+        # Generate 4 quaternion options with rotations around z-axis
+        quaternion_options = []
+        for yaw in [0, np.pi/2, np.pi, 3*np.pi/2]:
+            # Create rotation matrix for just the yaw component
+            yaw_matrix = euler2mat(0, 0, yaw, 'sxyz')
+            # Combine base rotation with yaw rotation
+            combined_rotation = np.dot(rotation_matrix, yaw_matrix)
+            # Convert to quaternion
+            quat = mat2quat(combined_rotation)
+            quaternion_options.append(quat)
+        
+        return quaternion_options
+
+    def create_explicit_gripper_orientations(self):
+        """Alternative approach using explicit Euler angles"""
+        quaternion_options = []
+        
+        # Create 4 quaternions with different yaw angles
+        for yaw in [0, np.pi/2, np.pi, 3*np.pi/2]:
+            # Roll = 180°, Pitch = 0°, Yaw = variable
+            # This creates a gripper where z-axis points downward and x-axis varies with yaw
+            rotation_matrix = euler2mat(np.pi, 0, yaw, 'sxyz')
+            quat = mat2quat(rotation_matrix)
+            quaternion_options.append(quat)
+        
+        return quaternion_options
     
+    def create_gripper_orientations(self, x_axis_normalized, y_axis_normalized, z_axis_normalized):
+        """
+        Create gripper orientations where:
+        - x-axis is aligned with the input x_axis
+        - y-axis is opposite to the input y_axis
+        - z-axis points downward (opposite to the input z_axis)
+        
+        Args:
+            x_axis_normalized: Normalized x-axis from the original coordinate system
+            y_axis_normalized: Normalized y-axis from the original coordinate system
+            z_axis_normalized: Normalized z-axis from the original coordinate system
+            
+        Returns:
+            List of quaternion options (4 orientations with different yaws)
+        """
+        # 1. Keep x-axis aligned with the current x-axis
+        gripper_x = x_axis_normalized.copy()
+        
+        # 2. Make y-axis opposite of the current y-axis
+        gripper_y = -y_axis_normalized.copy()
+        
+        # 3. Make z-axis point downward (opposite of current z-axis)
+        gripper_z = -z_axis_normalized.copy()
+        
+        # Create rotation matrix from these orthonormal vectors
+        gripper_rotation_matrix = np.column_stack((gripper_x, gripper_y, gripper_z))
+        
+        # Verify the matrix is orthogonal (should be close to identity)
+        check_matrix = gripper_rotation_matrix.T @ gripper_rotation_matrix
+        print("Orthogonality check:", check_matrix)  # Should be close to identity matrix
+        
+        # Convert to quaternion
+        base_quaternion = mat2quat(gripper_rotation_matrix)
+        print("Base gripper quaternion:", base_quaternion)
+        
+        # Generate 4 quaternion options by rotating around z-axis
+        yaws = [0, np.pi/2, np.pi, 3*np.pi/2]
+        quaternion_options = []
+        
+        for θ in yaws:
+            q = self.quat_mul(base_quaternion, self.q_yaw(θ))
+            quaternion_options.append(q)
+            print(f"Quaternion with yaw {θ:.2f}° ({np.degrees(θ)}°):", q)
+        
+        return quaternion_options
+    
+    # Function to create quaternion for yaw rotation
+    def q_yaw(self, theta):
+        # Quaternion for rotation about local z-axis by θ:
+        # q = [x, y, z, w] = [0, 0, sin(θ/2), cos(θ/2)]
+        return np.array([0.0, 0.0, np.sin(theta/2), np.cos(theta/2)])
+
+    # Function to multiply quaternions
+    def quat_mul(self, q, r):
+        x1, y1, z1, w1 = q
+        x2, y2, z2, w2 = r
+        # Hamilton product r ⊗ q (first q, then r)
+        return np.array([
+            w1*x2 + x1*w2 + y1*z2 - z1*y2,
+            w1*y2 - x1*z2 + y1*w2 + z1*x2,
+            w1*z2 + x1*y2 - y1*x2 + z1*w2,
+            w1*w2 - x1*x2 - y1*y2 - z1*z2
+        ])
+
     def publish_stack_state(self):
         """Publish the current state of the box stack"""
         from stack_optimization_interfaces.msg import BoxState, BoxInfo
