@@ -11,7 +11,9 @@
 
   <depend>moveit_task_constructor_core</depend>
   <depend>rclcpp</depend>
-
+  <depend>vg_control_interfaces</depend>
+  <depend>stack_optimization_interfaces</depend>
+  <depend>pose_estimation_interfaces</depend>
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 

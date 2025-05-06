@@ -282,15 +282,124 @@ class BoxStackOptimizer:
             # Each box must be supported by either the pallet or at least one other box
             model.AddBoolOr(support_conditions)
         
-        # Objective: minimize total height
+        # Objective: minimize total height and maximize stability
         max_z = model.NewIntVar(0, self.max_height, 'max_z')
+        
+        # Track the total unsupported area across all boxes
+        total_unsupported_area = model.NewIntVar(0, self.pallet_x * self.pallet_y * n, 'total_unsupported_area')
+        unsupported_areas = []
+        
         for i in range(n):
             model.Add(max_z >= z[i] + boxes[i][2])
-        model.Minimize(max_z)
+            
+            # Calculate total base area of the box
+            base_area = model.NewIntVar(0, self.pallet_x * self.pallet_y, f'base_area_{i}')
+            model.Add(base_area == length_vars[i] * width_vars[i])
+            
+            # For boxes on the pallet (z=0), the support area is the full base area
+            on_pallet = model.NewBoolVar(f'on_pallet_{i}')
+            model.Add(z[i] == 0).OnlyEnforceIf(on_pallet)
+            model.Add(z[i] != 0).OnlyEnforceIf(on_pallet.Not())
+            
+            # For boxes not on the pallet, calculate support areas from boxes below
+            supported_area = model.NewIntVar(0, self.pallet_x * self.pallet_y, f'supported_area_{i}')
+            
+            # If on pallet, supported area is same as base area
+            model.Add(supported_area == base_area).OnlyEnforceIf(on_pallet)
+            
+            # If not on pallet, calculate supported area from boxes below
+            if i > 0:  # Only needed if there are boxes to support this one
+                support_areas = []
+                for j in range(n):
+                    if i == j:
+                        continue
+                    
+                    # Check if box j is directly below box i
+                    is_below = model.NewBoolVar(f'is_below_{i}_{j}')
+                    model.Add(z[i] == z[j] + boxes[j][2]).OnlyEnforceIf(is_below)
+                    model.Add(z[i] != z[j] + boxes[j][2]).OnlyEnforceIf(is_below.Not())
+                    
+                    # Calculate overlap area
+                    overlap_area = self._calculate_overlap_area(model, i, j, x, y, length_vars, width_vars)
+                    
+                    # This area only counts if box j is directly below box i
+                    effective_area = model.NewIntVar(0, self.pallet_x * self.pallet_y, f'effective_area_{i}_{j}')
+                    model.Add(effective_area == overlap_area).OnlyEnforceIf(is_below)
+                    model.Add(effective_area == 0).OnlyEnforceIf(is_below.Not())
+                    
+                    support_areas.append(effective_area)
+                
+                # Add all support areas (will only include boxes directly below)
+                if support_areas:
+                    total_support = model.NewIntVar(0, self.pallet_x * self.pallet_y, f'total_support_{i}')
+                    model.Add(total_support == sum(support_areas))
+                    model.Add(supported_area == total_support).OnlyEnforceIf(on_pallet.Not())
+            
+            # Calculate unsupported area
+            unsupported_area = model.NewIntVar(0, self.pallet_x * self.pallet_y, f'unsupported_area_{i}')
+            model.Add(unsupported_area == base_area - supported_area)
+            
+            # Ensure this doesn't go negative
+            model.Add(unsupported_area >= 0)
+            
+            unsupported_areas.append(unsupported_area)
+        
+        # Sum all unsupported areas
+        model.Add(total_unsupported_area == sum(unsupported_areas))
+        
+        # Add after calculating unsupported_areas, before the final objective function
+
+        # Calculate edge proximity scores
+        edge_distance_sum = model.NewIntVar(0, self.pallet_x * self.pallet_y * n * 2, 'edge_distance_sum')
+        edge_distances = []
+
+        for i in range(n):
+            # Calculate distance to each edge (higher is worse - further from edge)
+            dist_to_left = model.NewIntVar(0, self.pallet_x, f'dist_left_{i}')
+            dist_to_right = model.NewIntVar(0, self.pallet_x, f'dist_right_{i}')
+            dist_to_bottom = model.NewIntVar(0, self.pallet_y, f'dist_bottom_{i}')
+            dist_to_top = model.NewIntVar(0, self.pallet_y, f'dist_top_{i}')
+            
+            # Distance to left edge is just x coordinate
+            model.Add(dist_to_left == x[i])
+            
+            # Distance to right edge is (pallet_x - (x + length))
+            model.Add(dist_to_right == self.pallet_x - (x[i] + length_vars[i]))
+            
+            # Distance to bottom edge is just y coordinate
+            model.Add(dist_to_bottom == y[i])
+            
+            # Distance to top edge is (pallet_y - (y + width))
+            model.Add(dist_to_top == self.pallet_y - (y[i] + width_vars[i]))
+            
+            # Calculate the sum of the TWO smallest distances to encourage corner placement
+            # First find min distances for each axis
+            min_x_dist = model.NewIntVar(0, self.pallet_x, f'min_x_dist_{i}')
+            min_y_dist = model.NewIntVar(0, self.pallet_y, f'min_y_dist_{i}')
+            
+            model.AddMinEquality(min_x_dist, [dist_to_left, dist_to_right])
+            model.AddMinEquality(min_y_dist, [dist_to_bottom, dist_to_top])
+            
+            # Sum the minimum distances in each axis - this encourages corner placement
+            two_edge_distance = model.NewIntVar(0, self.pallet_x + self.pallet_y, f'two_edge_distance_{i}')
+            model.Add(two_edge_distance == min_x_dist + min_y_dist)
+            
+            # Add to total edge distance
+            edge_distances.append(two_edge_distance)
+
+        # Sum all edge distances
+        model.Add(edge_distance_sum == sum(edge_distances))
+
+        # Weights for balancing objectives
+        stability_weight = 10  # Weight for unsupported area
+        edge_weight = 5        # Weight for distance from edges
+
+        # Combined objective: minimize height, unsupported area, and distance from edges
+        model.Minimize(max_z + stability_weight * total_unsupported_area + edge_weight * edge_distance_sum)
         
         # Solve
         solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = 10.0  # Limit solving time
+        solver.parameters.max_time_in_seconds = 5.0  # Limit solving time
         status = solver.Solve(model)
         
         if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -381,6 +490,19 @@ class BoxStackOptimizer:
             
             potential_supporters.append((i, box, correct_z_level))
         
+        # Calculate base area of the new box
+        base_area = model.NewIntVar(0, self.pallet_x * self.pallet_y, 'base_area_new')
+        model.AddMultiplicationEquality(base_area, [l_new, w_new])
+        
+        # For the new box, calculate support areas from boxes below
+        supported_area = model.NewIntVar(0, self.pallet_x * self.pallet_y, 'supported_area_new')
+        
+        # If on pallet, supported area is same as base area
+        model.Add(supported_area == base_area).OnlyEnforceIf(support_on_pallet)
+        
+        # If not on pallet, calculate supported area from boxes below
+        support_areas = []
+        
         # For each potential supporter, determine if there's sufficient support
         for i, box, correct_z_level in potential_supporters:
             x_i, y_i, z_i, l_i, w_i, h_i, _ = box
@@ -404,6 +526,26 @@ class BoxStackOptimizer:
             y_overlap = model.NewIntVar(-self.pallet_y, self.pallet_y, f'y_overlap_new_{i}')
             model.Add(x_overlap == x_overlap_end - x_overlap_start)
             model.Add(y_overlap == y_overlap_end - y_overlap_start)
+            
+            # Handle negative overlaps (no overlap case)
+            x_overlap_pos = model.NewIntVar(0, self.pallet_x, f'x_overlap_pos_new_{i}')
+            y_overlap_pos = model.NewIntVar(0, self.pallet_y, f'y_overlap_pos_new_{i}')
+            
+            # x_overlap_pos = max(0, x_overlap)
+            model.AddMaxEquality(x_overlap_pos, [x_overlap, model.NewConstant(0)])
+            # y_overlap_pos = max(0, y_overlap)
+            model.AddMaxEquality(y_overlap_pos, [y_overlap, model.NewConstant(0)])
+            
+            # Calculate area = x_overlap_pos * y_overlap_pos
+            overlap_area = model.NewIntVar(0, self.pallet_x * self.pallet_y, f'overlap_area_new_{i}')
+            model.AddMultiplicationEquality(overlap_area, [x_overlap_pos, y_overlap_pos])
+            
+            # This area only counts if box i is directly below the new box
+            effective_area = model.NewIntVar(0, self.pallet_x * self.pallet_y, f'effective_area_new_{i}')
+            model.Add(effective_area == overlap_area).OnlyEnforceIf(correct_z_level)
+            model.Add(effective_area == 0).OnlyEnforceIf(correct_z_level.Not())
+            
+            support_areas.append(effective_area)
             
             # Check for positive overlap
             positive_x_overlap = model.NewBoolVar(f'positive_x_overlap_new_{i}')
@@ -451,19 +593,99 @@ class BoxStackOptimizer:
         # The new box must be supported by either the pallet or one or more boxes directly beneath it
         model.AddBoolOr(support_conditions)
         
-        # Objective: place the box at the lowest possible height
-        model.Minimize(z_new)
+        # Sum all support areas for boxes directly below
+        if support_areas:
+            total_support = model.NewIntVar(0, self.pallet_x * self.pallet_y, 'total_support_new')
+            model.Add(total_support == sum(support_areas))
+            model.Add(supported_area == total_support).OnlyEnforceIf(support_on_pallet.Not())
         
-        # Solve
+        # Calculate unsupported area
+        unsupported_area = model.NewIntVar(0, self.pallet_x * self.pallet_y, 'unsupported_area_new')
+        model.Add(unsupported_area == base_area - supported_area)
+        
+        # Ensure this doesn't go negative
+        model.Add(unsupported_area >= 0)
+        
+        dist_to_left = model.NewIntVar(0, self.pallet_x, 'dist_left_new')
+        dist_to_right = model.NewIntVar(0, self.pallet_x, 'dist_right_new')
+        dist_to_bottom = model.NewIntVar(0, self.pallet_y, 'dist_bottom_new')
+        dist_to_top = model.NewIntVar(0, self.pallet_y, 'dist_top_new')
+
+        # Distance to left edge is just x coordinate
+        model.Add(dist_to_left == x_new)
+
+        # Distance to right edge is (pallet_x - (x + length))
+        model.Add(dist_to_right == self.pallet_x - (x_new + l_new))
+
+        # Distance to bottom edge is just y coordinate
+        model.Add(dist_to_bottom == y_new)
+
+        # Distance to top edge is (pallet_y - (y + width))
+        model.Add(dist_to_top == self.pallet_y - (y_new + w_new))
+
+        # Calculate the minimum distance in each axis
+        min_x_dist = model.NewIntVar(0, self.pallet_x, 'min_x_dist_new')
+        min_y_dist = model.NewIntVar(0, self.pallet_y, 'min_y_dist_new')
+
+        model.AddMinEquality(min_x_dist, [dist_to_left, dist_to_right])
+        model.AddMinEquality(min_y_dist, [dist_to_bottom, dist_to_top])
+
+        # Sum the minimum distances in each axis to encourage corner placement
+        edge_distance = model.NewIntVar(0, self.pallet_x + self.pallet_y, 'two_edge_distance_new')
+        model.Add(edge_distance == min_x_dist + min_y_dist)
+
+        # Weights for balancing objectives
+        stability_weight = 10  # Weight for unsupported area
+        edge_weight = 5        # Weight for distance from edges
+
+        # Combined objective: minimize height, unsupported area, and edge distance
+        model.Minimize(z_new + stability_weight * unsupported_area + edge_weight * edge_distance)
+
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = 5.0  # Limit solving time
         status = solver.Solve(model)
-        
+
         if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             return True, (solver.Value(x_new), solver.Value(y_new), solver.Value(z_new)), solver.Value(r_new)
         else:
             return False, None, None
     
+    def _calculate_overlap_area(self, model, i, j, x, y, length_vars, width_vars):
+        """Calculate the overlap area between box i and box j"""
+        x_overlap_start = model.NewIntVar(0, self.pallet_x, f'x_overlap_start_{i}_{j}')
+        x_overlap_end = model.NewIntVar(0, self.pallet_x, f'x_overlap_end_{i}_{j}')
+        y_overlap_start = model.NewIntVar(0, self.pallet_y, f'y_overlap_start_{i}_{j}')
+        y_overlap_end = model.NewIntVar(0, self.pallet_y, f'y_overlap_end_{i}_{j}')
+        
+        # Compute max of start positions (overlap start)
+        model.AddMaxEquality(x_overlap_start, [x[i], x[j]])
+        model.AddMaxEquality(y_overlap_start, [y[i], y[j]])
+        
+        # Compute min of end positions (overlap end)
+        model.AddMinEquality(x_overlap_end, [x[i] + length_vars[i], x[j] + length_vars[j]])
+        model.AddMinEquality(y_overlap_end, [y[i] + width_vars[i], y[j] + width_vars[j]])
+        
+        # Calculate overlap dimensions
+        x_overlap = model.NewIntVar(-self.pallet_x, self.pallet_x, f'x_overlap_{i}_{j}')
+        y_overlap = model.NewIntVar(-self.pallet_y, self.pallet_y, f'y_overlap_{i}_{j}')
+        model.Add(x_overlap == x_overlap_end - x_overlap_start)
+        model.Add(y_overlap == y_overlap_end - y_overlap_start)
+        
+        # Handle negative overlaps (no overlap case)
+        x_overlap_pos = model.NewIntVar(0, self.pallet_x, f'x_overlap_pos_{i}_{j}')
+        y_overlap_pos = model.NewIntVar(0, self.pallet_y, f'y_overlap_pos_{i}_{j}')
+        
+        # x_overlap_pos = max(0, x_overlap)
+        model.AddMaxEquality(x_overlap_pos, [x_overlap, model.NewConstant(0)])
+        # y_overlap_pos = max(0, y_overlap)
+        model.AddMaxEquality(y_overlap_pos, [y_overlap, model.NewConstant(0)])
+        
+        # Calculate area = x_overlap_pos * y_overlap_pos
+        overlap_area = model.NewIntVar(0, self.pallet_x * self.pallet_y, f'overlap_area_{i}_{j}')
+        model.AddMultiplicationEquality(overlap_area, [x_overlap_pos, y_overlap_pos])
+        
+        return overlap_area
+
     # SIMPLIFIED VISUALIZATION - More direct approach
     def visualize_stack(self):
         """Visualize the current stack of boxes"""
@@ -476,8 +698,8 @@ class BoxStackOptimizer:
         self.ax = self.fig.add_subplot(111, projection='3d')
         
         # Configure the axes
-        self.ax.set_xlim(0, self.pallet_x)
-        self.ax.set_ylim(0, self.pallet_y)
+        self.ax.set_xlim(0, max(self.pallet_x, self.pallet_y))
+        self.ax.set_ylim(0, max(self.pallet_x, self.pallet_y))
         self.ax.set_zlim(0, self.max_height)
         self.ax.set_xlabel("X")
         self.ax.set_ylabel("Y")
@@ -514,7 +736,7 @@ class BoxStackOptimizer:
         self.ax.view_init(elev=30, azim=45)  # Default view
         
         # Show the figure with blocking=True to ensure it stays visible
-        plt.show(block=False)
+        plt.show(block=True)
     
     def _plot_box(self, ax, origin, size, color):
         """Helper function to plot a box"""
@@ -624,6 +846,9 @@ class BoxStackService(Node):
         # Z-axis is the cross product
         z_axis_normalized = np.cross(x_axis_normalized, y_axis_normalized)
         z_axis_normalized = z_axis_normalized / np.linalg.norm(z_axis_normalized)
+
+        self.pallet_x_dimension = np.linalg.norm(x_axis)  # meters
+        self.pallet_y_dimension = np.linalg.norm(y_axis)
 
         
         

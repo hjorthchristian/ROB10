@@ -63,7 +63,7 @@ class PoseEstimationClient(Node):
                     self.get_logger().info(f'Orientation {i+1} (yaw={yaw_angle}°): '
                                         f'[{orientation.x:.4f}, {orientation.y:.4f}, '
                                         f'{orientation.z:.4f}, {orientation.w:.4f}]')
-                
+                self.get_logger().info(f'x_width: {response.x_width:.4f}, y_length: {response.y_length:.4f}, z_height: {response.z_height:.4f}')
                 
             else:
                 self.get_logger().error(f'Service failed: {response.error_message}')

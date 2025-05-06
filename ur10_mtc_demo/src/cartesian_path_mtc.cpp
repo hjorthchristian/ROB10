@@ -95,8 +95,8 @@ mtc::Task MTCTaskNode::createTask()
 
   // Configure a Cartesian path planner instead of sampling planner
   auto cartesian_planner = std::make_shared<mtc::solvers::CartesianPath>();
-  cartesian_planner->setMaxVelocityScalingFactor(0.05);  // 30% of maximum velocity
-  cartesian_planner->setMaxAccelerationScalingFactor(0.05);  // 20% of maximum acceleration
+  cartesian_planner->setMaxVelocityScalingFactor(0.01);  // 30% of maximum velocity
+  cartesian_planner->setMaxAccelerationScalingFactor(0.01);  // 20% of maximum acceleration
   cartesian_planner->setStepSize(0.005);  // Small step size for smoother motion
   cartesian_planner->setMinFraction(0.9);
   
@@ -119,13 +119,13 @@ mtc::Task MTCTaskNode::createTask()
   //[INFO] [1746449071.596287614] [pose_estimation_client]: Position: [0.2387, 0.6737, -0.7535]
    // [INFO] [1746449071.596751910] [pose_estimation_client]: Orientation 1 (yaw=0°): [0.9964, -0.0623, -0.0061, 0.0570]
 
-  target_pose.pose.position.x = 0.2387;
-  target_pose.pose.position.y =  0.6737;
-  target_pose.pose.position.z = -0.7705;
-  target_pose.pose.orientation.x = 0.9964;
-  target_pose.pose.orientation.y = -0.0623;
-  target_pose.pose.orientation.z = -0.0061;
-  target_pose.pose.orientation.w = 0.0570;
+  target_pose.pose.position.x = 0.275;
+  target_pose.pose.position.y =  0.749;
+  target_pose.pose.position.z = -0.746;
+  target_pose.pose.orientation.x = 0.737;
+  target_pose.pose.orientation.y = -0.676;
+  target_pose.pose.orientation.z = -0.001;
+  target_pose.pose.orientation.w = 0.024;
   
   // Create a move to pose stage with the Cartesian planner
   auto stage_move_to_pose = std::make_unique<mtc::stages::MoveTo>("move to target pose", cartesian_planner);

@@ -220,7 +220,10 @@ class RANSACSegmentationService(Node):
                     orientation.w = quat[3]
                     response.orientations.append(orientation)
 
-                #response.wrist_angle = response_data["wrist_angle"]
+                # Add box dimensions to the response
+                response.x_width = response_data["x_width"]
+                response.y_length = response_data["y_length"] 
+                response.z_height = response_data["z_height"]
                 
                 self.get_logger().info(f'Successfully generated pose response')
         
@@ -522,7 +525,32 @@ class RANSACSegmentationService(Node):
                 response_data["success"] = True
                 response_data["position"] = center.tolist()
                 response_data["orientations"] = quaternions
-                #response_data["wrist_angle"] = wrist_angle
+                
+                # Calculate and add box dimensions
+                # Convert 2D rectangle dimensions to millimeters for the response
+                if 'rect_width' in locals() and 'rect_height' in locals():
+                    # Convert from pixels to millimeters (approximate conversion based on depth)
+                    # Use the 3D calculated dimensions if available
+                    if 'width' in locals() and 'height' in locals():
+                        # Use the 3D dimensions we calculated earlier (already in meters)
+                        response_data["x_width"] = int(width * 100)  # Convert meters to mm
+                        response_data["y_length"] = int(height * 100)  # Convert meters to mm
+                    else:
+                        # Fallback to 2D pixel measurements with a simple scaling factor
+                        # This is very approximate and should be replaced with proper 3D measurement
+                        avg_depth_mm = np.mean(depth_copy[mask_bool]) if 'mask_bool' in locals() else 500
+                        scale_factor = avg_depth_mm / 100.0  # Simple scaling based on depth
+                        response_data["x_width"] = int(max(rect_width, rect_height) * scale_factor)
+                        response_data["y_length"] = int(min(rect_width, rect_height) * scale_factor)
+                else:
+                    # Default values if dimensions couldn't be determined
+                    response_data["x_width"] = 10  # Default 10cm width
+                    response_data["y_length"] = 100 # Default 10cm length
+                
+                # Standard height of 25cm (250mm)
+                response_data["z_height"] = 25  # 25cm in millimeters
+                
+                self.get_logger().info(f"Box dimensions: {response_data['x_width']}mm × {response_data['y_length']}mm × {response_data['z_height']}mm")
                 
                 # Add visualization of gripper alignment
                 try:
