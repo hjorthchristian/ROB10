@@ -58,7 +58,24 @@ ament_target_dependencies(
   tf2_eigen
 )
 
-install(TARGETS mtc_node cartesian_path_mtc pick_and_place_mtc_node
+add_executable(stacked_box_processor_node src/minimal_task.cpp)
+target_include_directories(stacked_box_processor_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_compile_features(stacked_box_processor_node PUBLIC c_std_99 cxx_std_17)
+ament_target_dependencies(
+  stacked_box_processor_node
+  pose_estimation_interfaces
+  vg_control_interfaces
+  stack_optimization_interfaces
+  rclcpp
+  moveit_task_constructor_core
+  tf2_geometry_msgs
+  tf2_eigen
+)
+
+
+install(TARGETS mtc_node cartesian_path_mtc pick_and_place_mtc_node stacked_box_processor_node
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch

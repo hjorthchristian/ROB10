@@ -46,7 +46,10 @@ class RANSACSegmentationService(Node):
         self.rgb_received = False
         self.depth_received = False
         self.images_ready = False
-        
+        self.depth_buffer = []
+        self.depth_buffer_size = 20  # Number of frames to average
+        self.depth_buffer_lock = threading.Lock()
+
         # Image subscriptions
         self.rgb_subscription = self.create_subscription(
             Image,
@@ -146,28 +149,121 @@ class RANSACSegmentationService(Node):
                 self.get_logger().error(traceback.format_exc())
     
     def depth_callback(self, msg):
-        """Depth image callback."""
+        """Depth image callback that collects multiple frames for averaging."""
         if self.depth_received:
-            return  # Already have an image
+            return
             
-        with self.image_lock:
+        with self.depth_buffer_lock:
             try:
                 if msg.encoding != '16UC1':
                     self.get_logger().error(f'Unsupported depth encoding: {msg.encoding}')
                     return
 
                 depth_data = np.frombuffer(msg.data, dtype=np.uint16)
-                self.depth_image = depth_data.reshape((msg.height, msg.width))
-                self.depth_received = True
-                self.get_logger().info('Depth image received and cached.')
+                depth_image = depth_data.reshape((msg.height, msg.width))
                 
-                # Check if both images are received
-                self.check_images_ready()
+                # Add to buffer
+                self.depth_buffer.append(depth_image)
+                self.get_logger().info(f'Depth frame added to buffer ({len(self.depth_buffer)}/{self.depth_buffer_size})')
+                
+                # Process buffer when we have enough frames
+                if len(self.depth_buffer) >= self.depth_buffer_size:
+                    self.process_depth_buffer()
             except Exception as e:
                 self.get_logger().error(f'Error processing depth image: {e}')
                 import traceback
                 self.get_logger().error(traceback.format_exc())
-    
+    def process_depth_buffer(self):
+        """Process collected depth frames with outlier rejection - faster vectorized version."""
+        if len(self.depth_buffer) < 3:
+            self.get_logger().warn('Not enough depth frames for averaging')
+            return
+            
+        self.get_logger().info(f'Processing {len(self.depth_buffer)} depth frames with outlier rejection')
+        
+        # Stack all frames into a 3D array
+        depth_stack = np.stack(self.depth_buffer, axis=0)
+        
+        # Create mask of valid values (> 0)
+        valid_mask = depth_stack > 0
+        
+        # Initialize output array
+        avg_depth = np.zeros_like(self.depth_buffer[0])
+        
+        # Count valid values per pixel
+        valid_count = np.sum(valid_mask, axis=0)
+        
+        # Handle single valid value case (fast path)
+        single_valid = valid_count == 1
+        if np.any(single_valid):
+            # Extract the one valid value for each pixel that has exactly one valid reading
+            for i in range(len(depth_stack)):
+                mask = valid_mask[i] & single_valid
+                avg_depth[mask] = depth_stack[i, mask]
+        
+        # Handle multiple valid values case (need outlier rejection)
+        multi_valid = valid_count > 1
+        
+        if np.any(multi_valid):
+            # Calculate median for pixels with multiple valid values
+            # Replace invalid values with NaN for median calculation
+            temp_stack = np.where(valid_mask, depth_stack, np.nan)
+            # Add this before line 211
+            all_nan_pixels = np.all(np.isnan(temp_stack), axis=0)
+            median_values = np.zeros_like(self.depth_buffer[0], dtype=float)
+            median_values[~all_nan_pixels] = np.nanmedian(temp_stack[:, ~all_nan_pixels], axis=0)
+
+            # Similarly before line 220
+            
+            
+            # Calculate absolute deviation from median for each valid pixel
+            abs_deviation = np.abs(depth_stack - np.expand_dims(median_values, axis=0))
+            
+            # Where data is invalid, set deviation to NaN
+            abs_deviation = np.where(valid_mask, abs_deviation, np.nan)
+            
+            # Calculate MAD (median absolute deviation) for each pixel
+            all_nan_pixels_dev = np.all(np.isnan(abs_deviation), axis=0)
+            mad_values = np.zeros_like(self.depth_buffer[0], dtype=float)
+            mad_values[~all_nan_pixels_dev] = np.nanmedian(abs_deviation[:, ~all_nan_pixels_dev], axis=0)
+            
+            
+            # Where MAD is 0 or NaN, just use the median
+            zero_mad = (mad_values == 0) | np.isnan(mad_values)
+            avg_depth[multi_valid & zero_mad] = median_values[multi_valid & zero_mad].astype(np.uint16)
+            
+            # For remaining pixels, need to filter outliers
+            remain_pixels = multi_valid & ~zero_mad
+            
+            if np.any(remain_pixels):
+                # We need to process these pixel by pixel, but there should be fewer now
+                y_indices, x_indices = np.where(remain_pixels)
+                
+                for i, j in zip(y_indices, x_indices):
+                    # Get valid values for this pixel
+                    valid_vals = depth_stack[:, i, j][valid_mask[:, i, j]]
+                    
+                    # Calculate inlier threshold
+                    threshold = 2.0
+                    inlier_mask = abs_deviation[:, i, j][valid_mask[:, i, j]] / mad_values[i, j] < threshold
+                    
+                    # Use inliers or median as fallback
+                    inliers = valid_vals[inlier_mask]
+                    if len(inliers) > 0:
+                        avg_depth[i, j] = int(np.mean(inliers))
+                    else:
+                        avg_depth[i, j] = int(median_values[i, j])
+        
+        # Set the processed depth image and mark as received
+        with self.image_lock:
+            self.depth_image = avg_depth.astype(np.uint16)
+            self.depth_received = True
+            self.get_logger().info('Depth image averaged with outlier rejection')
+            self.check_images_ready()
+        
+        # Clear the buffer
+        self.depth_buffer.clear()
+
     def check_images_ready(self):
         """Check if both images are received."""
         if self.rgb_received and self.depth_received and not self.images_ready:
@@ -242,6 +338,17 @@ class RANSACSegmentationService(Node):
                 
                 rgb_copy = self.rgb_image.copy() if self.rgb_image is not None else None
                 rgb_copy[int(rgb_copy.shape[0] * 0.3):, :, :] = 0
+
+                                # Keep only middle 50% of columns, set the rest to black
+                left_boundary = int(rgb_copy.shape[1] * 0.25)  # 25% from left
+                right_boundary = int(rgb_copy.shape[1] * 0.75)  # 75% from left
+
+                # Set left 25% to black
+                rgb_copy[:, :left_boundary, :] = 0
+                # Set right 25% to black
+                rgb_copy[:, right_boundary:, :] = 0
+                #keep only 70% of x direction
+
                 # Set top 30% to black (keep bottom 70%)
                 #rgb_copy[:int(rgb_copy.shape[0] * 0.3), :, :] = 0
 
@@ -482,7 +589,8 @@ class RANSACSegmentationService(Node):
                     quaternions = []
                     for θ in yaws:
                         q = self.quat_mul(orientation_quaternion, self.q_yaw(θ))
-                        quaternions.append(q)
+                        q_flip = self.closest_flip_z(q)
+                        quaternions.append(q_flip)
 
                     # quaternions now holds four [x,y,z,w] arrays
                     for i, q in enumerate(quaternions):
@@ -504,7 +612,7 @@ class RANSACSegmentationService(Node):
                 # ADD THIS NEW CODE HERE:
                 # Apply an offset of 2cm along the negative normal vector direction
                 # Note: We use negative normal because normal points into the surface
-                offset_distance = 0.02  # 2 cm offset
+                offset_distance = 0.04  # 2 cm offset
                 # Ensure normal is normalized
                 normal_direction = normal / np.linalg.norm(normal)
                 # Ensure normal points upward (negative Z in base frame is upward)
@@ -525,6 +633,16 @@ class RANSACSegmentationService(Node):
                 response_data["success"] = True
                 response_data["position"] = center.tolist()
                 response_data["orientations"] = quaternions
+
+                try:
+                    log_file_path = 'pose_positions.txt'
+                    with open(log_file_path, 'a') as f:
+                        timestamp = self.get_clock().now().to_msg().sec
+                        position_str = f"{response_data['position'][0]:.6f} {response_data['position'][1]:.6f} {response_data['position'][2]:.6f}"
+                        f.write(f"{timestamp} | '{request.text_prompt}' | {position_str}\n")
+                    self.get_logger().info(f"Position logged to {log_file_path}")
+                except Exception as e:
+                    self.get_logger().error(f"Failed to log position to file: {e}")
                 
                 # Calculate and add box dimensions
                 # Convert 2D rectangle dimensions to millimeters for the response
@@ -548,7 +666,7 @@ class RANSACSegmentationService(Node):
                     response_data["y_length"] = 100 # Default 10cm length
                 
                 # Standard height of 25cm (250mm)
-                response_data["z_height"] = 25  # 25cm in millimeters
+                response_data["z_height"] = 20  # 25cm in millimeters
                 
                 self.get_logger().info(f"Box dimensions: {response_data['x_width']}mm × {response_data['y_length']}mm × {response_data['z_height']}mm")
                 
@@ -910,7 +1028,7 @@ class RANSACSegmentationService(Node):
         # Return only the x, y, z coordinates
         return transformed_points
 
-    def get_plane_info_ransac(self, points_3d, iterations=100, threshold=0.0075):
+    def get_plane_info_ransac(self, points_3d, iterations=100, threshold=0.01):
         """
         Calculates plane using RANSAC. Returns dict including inlier_indices relative to input points_3d.
         """
@@ -1320,6 +1438,19 @@ class RANSACSegmentationService(Node):
             w1*z2 + x1*y2 - y1*x2 + z1*w2,
             w1*w2 - x1*x2 - y1*y2 - z1*z2
         ])
+    def closest_flip_z(self, q):
+        """
+        Return the 180°-around-XY‐plane quaternion [ux,uy,0,0]
+        that flips local Z → global –Z and is closest to q=[x,y,z,w].
+        """
+        x, y, z, w = q
+        r = np.hypot(x, y)
+        if r < 1e-8:
+            # degenerate: choose X axis
+            return np.array([1.0, 0.0, 0.0, 0.0])
+        ux, uy = x / r, y / r
+        return np.array([ux, uy, 0.0, 0.0])
+
 
 def main(args=None):
     rclpy.init(args=args)

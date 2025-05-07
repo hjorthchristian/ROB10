@@ -16,6 +16,10 @@ find_package(moveit_visual_tools REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 
+find_package(pose_estimation_interfaces REQUIRED)
+find_package(vg_control_interfaces REQUIRED)
+find_package(stack_optimization_interfaces REQUIRED)
+
 add_executable(moveit_ur src/moveit_ur.cpp)
 target_include_directories(moveit_ur PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -60,6 +64,10 @@ target_compile_features(move_to_pose_movegroup PUBLIC c_std_99 cxx_std_17)
 ament_target_dependencies(move_to_pose_movegroup
   rclcpp
   moveit_ros_planning_interface
+  pose_estimation_interfaces
+  vg_control_interfaces
+  stack_optimization_interfaces
+
 )
 
 install(

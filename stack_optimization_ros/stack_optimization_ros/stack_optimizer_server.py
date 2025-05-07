@@ -736,7 +736,7 @@ class BoxStackOptimizer:
         self.ax.view_init(elev=30, azim=45)  # Default view
         
         # Show the figure with blocking=True to ensure it stays visible
-        plt.show(block=True)
+        plt.show(block=False)
     
     def _plot_box(self, ax, origin, size, color):
         """Helper function to plot a box"""
@@ -1213,7 +1213,7 @@ class BoxStackService(Node):
             self.publish_box_tf(f'box_{self.optimizer.box_count - 1}', position, quat)
             
             # Explicitly visualize the updated stack - IMPORTANT for visibility
-            self.visualize_stack()
+            #self.visualize_stack()
             
             self.publish_stack_state()
             
