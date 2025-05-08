@@ -47,7 +47,7 @@ class RANSACSegmentationService(Node):
         self.depth_received = False
         self.images_ready = False
         self.depth_buffer = []
-        self.depth_buffer_size = 20  # Number of frames to average
+        self.depth_buffer_size = 10  # Number of frames to average
         self.depth_buffer_lock = threading.Lock()
 
         # Image subscriptions
@@ -91,6 +91,19 @@ class RANSACSegmentationService(Node):
         # Start a thread to check SAM service availability
         threading.Thread(target=self.check_sam_service, daemon=True).start()
     
+    def reset_image_state(self):
+        """Reset image state to force acquisition of new images."""
+        with self.image_lock:
+            self.rgb_received = False
+            self.depth_received = False
+            self.images_ready = False
+        
+        with self.depth_buffer_lock:
+            self.depth_buffer.clear()
+        
+        self.get_logger().info('Image state reset - ready to receive new frames')
+
+
     def check_sam_service(self):
         """Check if SAM service is available in a non-blocking way."""
         self.get_logger().info("Checking SAM service availability...")
@@ -108,9 +121,10 @@ class RANSACSegmentationService(Node):
         self.sam_connection_checked = True
     
     def rgb_callback(self, msg):
-        """RGB image callback."""
+        """RGB image callback.""" 
+
         if self.rgb_received:
-            return  # Already have an image
+            return
             
         with self.image_lock:
             try:
@@ -137,8 +151,8 @@ class RANSACSegmentationService(Node):
                 else:
                     image_data = np.frombuffer(msg.data, dtype=np.uint8)
                     self.rgb_image = image_data.reshape((msg.height, msg.width, 3))
+                    self.rgb_received = True
                 
-                self.rgb_received = True
                 self.get_logger().info('RGB image received and cached.')
                 
                 # Check if both images are received
@@ -150,9 +164,10 @@ class RANSACSegmentationService(Node):
     
     def depth_callback(self, msg):
         """Depth image callback that collects multiple frames for averaging."""
+        # We'll need to handle frames even if depth was previously received
         if self.depth_received:
+        # Skip processing if we already have processed depth data
             return
-            
         with self.depth_buffer_lock:
             try:
                 if msg.encoding != '16UC1':
@@ -166,9 +181,13 @@ class RANSACSegmentationService(Node):
                 self.depth_buffer.append(depth_image)
                 self.get_logger().info(f'Depth frame added to buffer ({len(self.depth_buffer)}/{self.depth_buffer_size})')
                 
-                # Process buffer when we have enough frames
-                if len(self.depth_buffer) >= self.depth_buffer_size:
+                # Process buffer when we have enough frames - but only if we're waiting for new data
+                if not self.depth_received and len(self.depth_buffer) >= self.depth_buffer_size:
                     self.process_depth_buffer()
+                    # After processing, mark depth as received
+                    self.depth_received = True
+                    self.check_images_ready()
+                    
             except Exception as e:
                 self.get_logger().error(f'Error processing depth image: {e}')
                 import traceback
@@ -193,66 +212,16 @@ class RANSACSegmentationService(Node):
         # Count valid values per pixel
         valid_count = np.sum(valid_mask, axis=0)
         
-        # Handle single valid value case (fast path)
-        single_valid = valid_count == 1
-        if np.any(single_valid):
-            # Extract the one valid value for each pixel that has exactly one valid reading
-            for i in range(len(depth_stack)):
-                mask = valid_mask[i] & single_valid
-                avg_depth[mask] = depth_stack[i, mask]
+           # Handle pixels with no valid values
+        no_valid = valid_count == 0
         
-        # Handle multiple valid values case (need outlier rejection)
-        multi_valid = valid_count > 1
-        
-        if np.any(multi_valid):
-            # Calculate median for pixels with multiple valid values
-            # Replace invalid values with NaN for median calculation
+        # For pixels with at least one valid value, compute mean
+        has_valid = valid_count > 0
+        if np.any(has_valid):
+            # Replace invalid (zero) values with NaN for mean calculation
             temp_stack = np.where(valid_mask, depth_stack, np.nan)
-            # Add this before line 211
-            all_nan_pixels = np.all(np.isnan(temp_stack), axis=0)
-            median_values = np.zeros_like(self.depth_buffer[0], dtype=float)
-            median_values[~all_nan_pixels] = np.nanmedian(temp_stack[:, ~all_nan_pixels], axis=0)
-
-            # Similarly before line 220
-            
-            
-            # Calculate absolute deviation from median for each valid pixel
-            abs_deviation = np.abs(depth_stack - np.expand_dims(median_values, axis=0))
-            
-            # Where data is invalid, set deviation to NaN
-            abs_deviation = np.where(valid_mask, abs_deviation, np.nan)
-            
-            # Calculate MAD (median absolute deviation) for each pixel
-            all_nan_pixels_dev = np.all(np.isnan(abs_deviation), axis=0)
-            mad_values = np.zeros_like(self.depth_buffer[0], dtype=float)
-            mad_values[~all_nan_pixels_dev] = np.nanmedian(abs_deviation[:, ~all_nan_pixels_dev], axis=0)
-            
-            
-            # Where MAD is 0 or NaN, just use the median
-            zero_mad = (mad_values == 0) | np.isnan(mad_values)
-            avg_depth[multi_valid & zero_mad] = median_values[multi_valid & zero_mad].astype(np.uint16)
-            
-            # For remaining pixels, need to filter outliers
-            remain_pixels = multi_valid & ~zero_mad
-            
-            if np.any(remain_pixels):
-                # We need to process these pixel by pixel, but there should be fewer now
-                y_indices, x_indices = np.where(remain_pixels)
-                
-                for i, j in zip(y_indices, x_indices):
-                    # Get valid values for this pixel
-                    valid_vals = depth_stack[:, i, j][valid_mask[:, i, j]]
-                    
-                    # Calculate inlier threshold
-                    threshold = 2.0
-                    inlier_mask = abs_deviation[:, i, j][valid_mask[:, i, j]] / mad_values[i, j] < threshold
-                    
-                    # Use inliers or median as fallback
-                    inliers = valid_vals[inlier_mask]
-                    if len(inliers) > 0:
-                        avg_depth[i, j] = int(np.mean(inliers))
-                    else:
-                        avg_depth[i, j] = int(median_values[i, j])
+            # Calculate mean for each pixel, ignoring NaN values
+            avg_depth[has_valid] = np.nanmean(temp_stack[:, has_valid], axis=0).astype(np.uint16)
         
         # Set the processed depth image and mark as received
         with self.image_lock:
@@ -271,13 +240,42 @@ class RANSACSegmentationService(Node):
             self.get_logger().info('Both RGB and depth images received. Ready for processing.')
     
     def service_callback(self, request, response):
-        """Non-blocking service callback that spawns a worker thread."""
+        """Service callback that acquires new images for each request."""
         self.get_logger().info(f'Received service request with prompt: "{request.text_prompt}"')
         
-        if not self.images_ready:
-            self.get_logger().error('Images not yet available. Please try again later.')
+        # Reset image state to force new image acquisition
+        self.reset_image_state()
+        
+        # Create an event to wait for new images
+        images_ready_event = threading.Event()
+        
+        # Create a timeout mechanism
+        def check_images_ready_with_timeout():
+            start_time = time.time()
+            timeout = 5.0  # 5 seconds timeout
+            
+            while not self.images_ready and (time.time() - start_time) < timeout:
+                time.sleep(0.1)
+            
+            # Signal that we're done waiting (either got images or timed out)
+            images_ready_event.set()
+        
+        # Start thread to wait for images
+        image_wait_thread = threading.Thread(target=check_images_ready_with_timeout)
+        image_wait_thread.daemon = True
+        image_wait_thread.start()
+        
+        # Wait for images or timeout
+        if not images_ready_event.wait(timeout=6.0):
+            self.get_logger().error('Timed out waiting for new images')
             response.success = False
-            response.error_message = 'Images not yet available. Please try again later.'
+            response.error_message = 'Timed out waiting for new images'
+            return response
+        
+        if not self.images_ready:
+            self.get_logger().error('Failed to acquire new images')
+            response.success = False
+            response.error_message = 'Failed to acquire new images'
             return response
         
         # Create a thread-safe response object

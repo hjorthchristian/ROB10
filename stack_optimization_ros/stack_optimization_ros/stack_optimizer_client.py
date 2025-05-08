@@ -36,7 +36,7 @@ def main(args=None):
     # Example boxes to place
     boxes = [
         (40, 20, 20),
-        (20, 20, 20),
+        (40, 20, 20),
       
     ]
     

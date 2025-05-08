@@ -23,6 +23,8 @@
         "*.ipp": "cpp",
         "bitset": "cpp",
         "regex": "cpp",
-        "chrono": "cpp"
+        "chrono": "cpp",
+        "condition_variable": "cpp",
+        "future": "cpp"
     }
 }

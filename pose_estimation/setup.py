@@ -22,6 +22,7 @@ setup(
         'console_scripts': [
             'pose_estimation = pose_estimation.pose_estimation_client:main',
             'pose_estimation_service = pose_estimation.pose_estimation_server:main',
+            'depth_consistency_monitor = pose_estimation.depth_consistency:main',
         ],
     },
 )

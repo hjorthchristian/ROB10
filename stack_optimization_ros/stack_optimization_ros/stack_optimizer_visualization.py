@@ -80,35 +80,26 @@ class BoxStackVisualizer(Node):
         return self.colors[box_id % len(self.colors)]
     
     def box_state_callback(self, msg):
-        """Callback for box state messages with added debugging"""
+        """Callback for box state messages"""
         with self.data_lock:
             self.boxes = msg.boxes
             self.update_needed = True
             
-            # Debug logging
-            self.get_logger().info(f"Received box state with {len(self.boxes)} boxes")
-            
-            # Log details of each box
-            for box in self.boxes:
-                self.get_logger().info(f"Box {box.id}: Position ({box.x}, {box.y}, {box.z}), " + 
-                                    f"Dimensions: {box.width}x{box.length}x{box.height}")
-                self.get_logger().info(f"Orientation: w={box.orientation.w}, x={box.orientation.x}, " +
-                                    f"y={box.orientation.y}, z={box.orientation.z}")
-            
             # Calculate current max dimensions with extra buffer
             if self.boxes:
-                # Only expand limits, never contract
-                current_x_max = max([box.x + box.width for box in self.boxes]) * 1.2
-                current_y_max = max([box.y + box.length for box in self.boxes]) * 1.2
-                current_z_max = max([box.z + box.height for box in self.boxes]) * 1.2
+                # For accurate visualization boundaries, consider the full box extents
+                # Note: box position is the center, so we need to add half width/length
+                max_x = max([box.x + box.length/2 for box in self.boxes]) * 1.2
+                max_y = max([box.y + box.width/2 for box in self.boxes]) * 1.2
+                max_z = max([box.z for box in self.boxes]) * 1.2  # z is top of box
                 
-                # Update max values only if they increase significantly (avoid small changes)
-                if current_x_max > self.x_max * 1.1:
-                    self.x_max = current_x_max
-                if current_y_max > self.y_max * 1.1:
-                    self.y_max = current_y_max
-                if current_z_max > self.z_max * 1.1:
-                    self.z_max = current_z_max
+                # Update max values only if they increase significantly
+                if max_x > self.x_max:
+                    self.x_max = max_x
+                if max_y > self.y_max:
+                    self.y_max = max_y
+                if max_z > self.z_max:
+                    self.z_max = max_z
 
     def plot_box(self, box):
         """Visualize a single box in 3D with proper quaternion orientation application"""
@@ -117,28 +108,45 @@ class BoxStackVisualizer(Node):
         length = box.length
         height = box.height
         
-        # Box position (bottom corner)
+        # Get box position (server reports position as corner, not center)
         x = box.x
         y = box.y
-        z = box.z
+        z = box.z - height  # Adjust if server reports z at top of box
+        # Important: Override the quaternion to keep boxes upright
+    # This cancels the rotation that's laying the boxes on their sides
+        orig_quat = [box.orientation.w, box.orientation.x, box.orientation.y, box.orientation.z]
         
-        self.get_logger().info(f"Plotting box {box.id}: pos=({x},{y},{z}), dims=({width},{length},{height})")
+        # Check if this is the problematic X-axis rotation quaternion (approximately [0.7071, 0.7071, 0, 0])
+        if np.isclose(orig_quat[0], 0.7071, atol=0.01) and np.isclose(orig_quat[1], 0.7071, atol=0.01):
+            # This is the problematic rotation - extract just the Z component if any
+            # For the common case, simply use identity quaternion
+            box.orientation.w = 1.0
+            box.orientation.x = 0.0
+            box.orientation.y = 0.0
+            box.orientation.z = 0.0
+            self.get_logger().info(f"Corrected problematic X-axis rotation for box {box.id}")
+        # If it's a different rotation, keep it as is
         
-        # Define the vertices of the box before rotation (relative to box corner)
-        # Using the same vertex order as the server for consistency
+        self.get_logger().info(f"Plotting box {box.id}: pos=({x},{y},{z}), dims=({length},{width},{height})")
+        
+        # Define the vertices of the box (relative to corner)
         verts = [
-            [x, y, z],                           # bottom front left
-            [x + length, y, z],                  # bottom front right
-            [x + length, y + width, z],          # bottom back right
-            [x, y + width, z],                   # bottom back left
-            [x, y, z + height],                  # top front left
-            [x + length, y, z + height],         # top front right
+            [x, y, z],                         # bottom front left
+            [x + length, y, z],                # bottom front right
+            [x + length, y + width, z],        # bottom back right
+            [x, y + width, z],                 # bottom back left
+            [x, y, z + height],                # top front left
+            [x + length, y, z + height],       # top front right
             [x + length, y + width, z + height], # top back right
-            [x, y + width, z + height],          # top back left
+            [x, y + width, z + height],        # top back left
         ]
         
+        # Print initial vertices
+        self.get_logger().info(f"Initial vertices for box {box.id}:")
+        for i, v in enumerate(verts):
+            self.get_logger().info(f"  Vertex {i}: ({v[0]}, {v[1]}, {v[2]})")
+        
         # Only apply quaternion rotation if it's not the identity quaternion
-        # Check if we have a non-identity quaternion
         quat = [box.orientation.w, box.orientation.x, box.orientation.y, box.orientation.z]
         if not np.isclose(quat[0], 1.0) or not np.allclose(quat[1:], [0, 0, 0]):
             # We have a real rotation to apply
@@ -146,17 +154,19 @@ class BoxStackVisualizer(Node):
             
             # Convert quaternion to rotation matrix
             rotation_matrix = quat2mat(quat)
+            self.get_logger().info(f"Rotation matrix:\n{rotation_matrix}")
             
-            # Box center before rotation (for rotation around center)
+            # Box center for rotation
             center = np.array([
                 x + length/2,
                 y + width/2,
                 z + height/2
             ])
+            self.get_logger().info(f"Rotation center: ({center[0]}, {center[1]}, {center[2]})")
             
             # Apply rotation around box center
             rotated_verts = []
-            for v in verts:
+            for i, v in enumerate(verts):
                 v_array = np.array(v)
                 # Vector from center to vertex
                 v_centered = v_array - center
@@ -165,13 +175,19 @@ class BoxStackVisualizer(Node):
                 # Translate back
                 v_final = v_rotated + center
                 rotated_verts.append(v_final.tolist())
+                self.get_logger().info(f"  Vertex {i}: Original ({v[0]}, {v[1]}, {v[2]}) -> Rotated ({v_final[0]}, {v_final[1]}, {v_final[2]})")
             
             verts = rotated_verts
+        
+        # Print final vertices
+        self.get_logger().info(f"Final vertices for box {box.id}:")
+        for i, v in enumerate(verts):
+            self.get_logger().info(f"  Vertex {i}: ({v[0]}, {v[1]}, {v[2]})")
         
         # Get consistent color for this box ID
         box_color = self.get_box_color(box.id)
         
-        # Define faces using the server's face ordering
+        # Define faces using the standard order
         faces = [
             [verts[0], verts[1], verts[2], verts[3]],  # bottom
             [verts[4], verts[5], verts[6], verts[7]],  # top
@@ -181,8 +197,9 @@ class BoxStackVisualizer(Node):
             [verts[3], verts[0], verts[4], verts[7]],  # left
         ]
         
-        self.get_logger().info(f"Box {box.id} vertices: {verts}")
-        self.get_logger().info(f"Box {box.id} faces: {faces}")
+        # Log face information
+        for i, face in enumerate(faces):
+            self.get_logger().info(f"Face {i}: {face}")
         
         # Plot the box using Poly3DCollection
         collection = Poly3DCollection(faces, facecolors=box_color, edgecolors='k', alpha=0.7)
@@ -191,7 +208,7 @@ class BoxStackVisualizer(Node):
         # Add box ID label near the top center of the box
         label_x = x + length/2
         label_y = y + width/2
-        label_z = z + height
+        label_z = z + height + 2  # Slightly above box
         
         label = self.ax.text(label_x, label_y, label_z, f"ID: {box.id}", 
                         color='black', backgroundcolor=box_color, 

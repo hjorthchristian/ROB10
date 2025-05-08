@@ -10,6 +10,9 @@ from PIL import Image as PILImage
 from lang_sam import LangSAM
 from lang_sam_interfaces.srv import SegmentImage  # Your custom service message
 
+import os
+import datetime
+
 class LangSAMServer(Node):
     def __init__(self):
         super().__init__('lang_sam_server')
@@ -17,8 +20,13 @@ class LangSAMServer(Node):
             SegmentImage, 
             'segment_image', 
             self.segment_callback)
-        self.model = LangSAM(sam_type="sam2.1_hiera_tiny")
+        self.model = LangSAM(sam_type="sam2.1_hiera_large")
         self.get_logger().info('LangSAM Service ready')
+        self.declare_parameter('save_images', True)
+        #self.declare_parameter('save_directory', '/lang_sam_segmentations')
+        self.save_images = self.get_parameter('save_images').value
+        #self.save_directory = self.get_parameter('save_directory').value
+
         
     def segment_callback(self, request, response):
         # Convert ROS Image to PIL Image without using CvBridge
@@ -52,10 +60,14 @@ class LangSAMServer(Node):
             mask = result['masks'][i]
             label = result['labels'][i]
             score = float(result['scores'][i])
+
+            if score < 0.5:
+                continue
             
             # Add to response arrays
             response.labels.append(label)
             response.scores.append(score)
+            
             
             # Convert mask to ROS Image without CvBridge
             mask_binary = (mask * 255).astype(np.uint8)
@@ -137,6 +149,30 @@ class LangSAMServer(Node):
         response.segmented_image = segmented_msg
         
         self.get_logger().info(f'Processed segmentation request, found {len(response.labels)} objects')
+        
+        if self.save_images and response.labels:
+            # Create a timestamp for the filename
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Create a string with object names (limit to first 3 objects if there are many)
+            if len(response.labels) <= 3:
+                objects_str = "_".join(response.labels)
+            else:
+                objects_str = "_".join(response.labels[:3]) + "_and_more"
+            
+            # Limit the length of objects_str to avoid excessively long filenames
+            if len(objects_str) > 100:
+                objects_str = objects_str[:100]
+            
+            # Create sanitized filename (replace invalid characters)
+            objects_str = objects_str.replace('/', '_').replace(' ', '_')
+            
+            # Create full filename
+            filename = f"{timestamp}_{objects_str}.png"
+            
+            # Save the image - convert RGB to BGR for OpenCV
+            cv2.imwrite(filename, cv2.cvtColor(overlay_image, cv2.COLOR_RGB2BGR))
+            self.get_logger().info(f'Saved segmented image to {filename}')
         return response
 
 def main(args=None):

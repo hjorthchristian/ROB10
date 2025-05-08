@@ -415,7 +415,74 @@ class BoxStackOptimizer:
             return False, None, None
     
     def _optimize_new_box_placement(self, length, width, height):
-        """Place a new box on the existing stack"""
+        
+        model = cp_model.CpModel()
+    
+        # First try to place the box on the ground level (z=0)
+        # If that fails, allow stacking on other boxes
+        
+        # Try ground placement first
+        ground_model = cp_model.CpModel()
+        
+        # Variables for the new box - only on ground level
+        x_new = ground_model.NewIntVar(self.margin, self.pallet_x - self.margin, 'x_new')
+        y_new = ground_model.NewIntVar(self.margin, self.pallet_y - self.margin, 'y_new')
+        # Force z=0 for ground placement
+        z_new = ground_model.NewConstant(0)
+        r_new = ground_model.NewBoolVar('r_new')  # 0 = no rotation, 1 = 90 deg rotation
+        
+        # ... [existing code for box dimensions] ...
+        l_new = ground_model.NewIntVar(0, self.pallet_x, 'l_new')
+        w_new = ground_model.NewIntVar(0, self.pallet_y, 'w_new')
+        ground_model.Add(l_new == length).OnlyEnforceIf(r_new.Not())
+        ground_model.Add(l_new == width).OnlyEnforceIf(r_new)
+        ground_model.Add(w_new == width).OnlyEnforceIf(r_new.Not())
+        ground_model.Add(w_new == length).OnlyEnforceIf(r_new)
+        
+        # Make sure box fits on pallet with margin
+        ground_model.Add(x_new + l_new <= self.pallet_x - self.margin)
+        ground_model.Add(y_new + w_new <= self.pallet_y - self.margin)
+        
+        # No-overlap constraints with existing boxes on ground level
+        for i, box in enumerate(self.placed_boxes):
+            x_i, y_i, z_i, l_i, w_i, h_i, _ = box
+            
+            # Only check ground-level boxes
+            if z_i == 0:
+                b1 = ground_model.NewBoolVar(f'no_overlap_x1_new_{i}')
+                b2 = ground_model.NewBoolVar(f'no_overlap_x2_new_{i}')
+                b3 = ground_model.NewBoolVar(f'no_overlap_y1_new_{i}')
+                b4 = ground_model.NewBoolVar(f'no_overlap_y2_new_{i}')
+                
+                # Add margin to no-overlap constraints
+                ground_model.Add(x_new + l_new + self.margin <= x_i).OnlyEnforceIf(b1)
+                ground_model.Add(x_new + l_new + self.margin > x_i).OnlyEnforceIf(b1.Not())
+                
+                ground_model.Add(x_i + l_i + self.margin <= x_new).OnlyEnforceIf(b2)
+                ground_model.Add(x_i + l_i + self.margin > x_new).OnlyEnforceIf(b2.Not())
+                
+                ground_model.Add(y_new + w_new + self.margin <= y_i).OnlyEnforceIf(b3)
+                ground_model.Add(y_new + w_new + self.margin > y_i).OnlyEnforceIf(b3.Not())
+                
+                ground_model.Add(y_i + w_i + self.margin <= y_new).OnlyEnforceIf(b4)
+                ground_model.Add(y_i + w_i + self.margin > y_new).OnlyEnforceIf(b4.Not())
+                
+                ground_model.AddBoolOr([b1, b2, b3, b4])
+        
+        # Simple objective for ground placement: minimize distance from origin
+        ground_model.Minimize(x_new + y_new)
+        
+        ground_solver = cp_model.CpSolver()
+        ground_solver.parameters.max_time_in_seconds = 2.0  # Shorter timeout
+        ground_status = ground_solver.Solve(ground_model)
+        
+        # If ground placement is successful, return that solution
+        if ground_status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            print("Found ground-level placement solution")
+            return True, (ground_solver.Value(x_new), ground_solver.Value(y_new), 0), ground_solver.Value(r_new)
+        
+        print("No ground-level placement possible, trying stacking...")
+            
         model = cp_model.CpModel()
         
         # Variables for the new box
@@ -645,9 +712,30 @@ class BoxStackOptimizer:
         solver.parameters.max_time_in_seconds = 5.0  # Limit solving time
         status = solver.Solve(model)
 
+        # Add detailed logging
+        status_name = "UNKNOWN"
+        if status == cp_model.OPTIMAL:
+            status_name = "OPTIMAL"
+        elif status == cp_model.FEASIBLE:
+            status_name = "FEASIBLE"
+        elif status == cp_model.INFEASIBLE:
+            status_name = "INFEASIBLE"
+        elif status == cp_model.MODEL_INVALID:
+            status_name = "MODEL_INVALID"
+        elif status == cp_model.UNKNOWN:
+            status_name = "UNKNOWN (could be timeout)"
+        
+        print(f"Solver status: {status_name}")
+        
         if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             return True, (solver.Value(x_new), solver.Value(y_new), solver.Value(z_new)), solver.Value(r_new)
         else:
+            # Print more details about the constraints
+            print(f"Failed to place box with dimensions {length}x{width}x{height}")
+            print(f"Current stack has {len(self.placed_boxes)} boxes")
+            for i, box in enumerate(self.placed_boxes):
+                x, y, z, l, w, h, _ = box
+                print(f"Box {i}: at ({x}, {y}, {z}) with dimensions {l}x{w}x{h}")
             return False, None, None
     
     def _calculate_overlap_area(self, model, i, j, x, y, length_vars, width_vars):
@@ -937,10 +1025,13 @@ class BoxStackService(Node):
             ])
         
         # Generate options with different yaw rotations
+        num_q =1
         for θ in yaws:
             q = quat_mul(base_quat, q_yaw(θ))
             quaternion_options.append(q)
-            print(f"Quaternion with yaw {np.degrees(θ):.1f}°:", q)
+            self.get_logger().info(f"Quaternion option {num_q+1} with yaw {np.degrees(θ):.1f}°: [{q[0]:.4f}, {q[1]:.4f}, {q[2]:.4f}, {q[3]:.4f}]")
+            num_q += 1
+
         
         return quaternion_options
 
@@ -1220,6 +1311,10 @@ class BoxStackService(Node):
             # Log both in optimizer units and meters
             self.get_logger().info(f'Box placed at local center (optimizer units): ({local_center_x}, {local_center_y}, {local_center_z})')
             self.get_logger().info(f'Box placed at global center (meters): ({global_center[0]:.4f}, {global_center[1]:.4f}, {global_center[2]:.4f})')
+            #Print quaternion list
+            for i, q in enumerate(response.orientations):
+                self.get_logger().info(f'Box Orientation {i}: [{q.x:.4f}, {q.y:.4f}, {q.z:.4f}, {q.w:.4f}]')
+
             self.get_logger().info(f'Box dimensions (optimizer units): {response.x_dimension}x{response.y_dimension}')
             self.get_logger().info(f'Box dimensions (meters): {response.x_dimension * self.optimizer_x_to_m:.4f}x{response.y_dimension * self.optimizer_y_to_m:.4f}')
         else:
