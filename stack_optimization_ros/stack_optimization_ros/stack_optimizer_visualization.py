@@ -107,7 +107,7 @@ class BoxStackVisualizer(Node):
         width = box.width
         length = box.length
         height = box.height
-        
+        #if box height not equal to z size then go up or som,ething like that gfor ground boxes
         # Get box position (server reports position as corner, not center)
         x = box.x
         y = box.y
