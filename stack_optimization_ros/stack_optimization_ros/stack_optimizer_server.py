@@ -702,11 +702,12 @@ class BoxStackOptimizer:
         model.Add(edge_distance == min_x_dist + min_y_dist)
 
         # Weights for balancing objectives
+        height_weight = 15     # Increased weight for height minimization
         stability_weight = 10  # Weight for unsupported area
         edge_weight = 5        # Weight for distance from edges
 
         # Combined objective: minimize height, unsupported area, and edge distance
-        model.Minimize(z_new + stability_weight * unsupported_area + edge_weight * edge_distance)
+        model.Minimize(height_weight * z_new + stability_weight * unsupported_area + edge_weight * edge_distance)
 
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = 5.0  # Limit solving time

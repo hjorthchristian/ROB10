@@ -111,7 +111,7 @@ class BoxStackVisualizer(Node):
         # Get box position (server reports position as corner, not center)
         x = box.x
         y = box.y
-        z = box.z - height  # Adjust if server reports z at top of box
+        z = box.z   # Adjust if server reports z at top of box
         # Important: Override the quaternion to keep boxes upright
     # This cancels the rotation that's laying the boxes on their sides
         orig_quat = [box.orientation.w, box.orientation.x, box.orientation.y, box.orientation.z]
