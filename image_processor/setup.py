@@ -25,6 +25,7 @@ setup(
             'lang_sam_client = image_processor.lang_sam_client:main',
             'segmentation_and_pose_estimation = image_processor.segmentation_and_pose_estimation:main',
             'segmentation_and_pose_estimation_v2 = image_processor.segmentation_and_pose_estimation_v2:main',
+            'image_republisher = image_processor.image_republisher:main',
 
         ],
     },

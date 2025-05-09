@@ -205,7 +205,7 @@ bool BoxProcessorNode::detectBox(geometry_msgs::msg::PoseStamped& box_pose,
     request->text_prompt = "box";
     
     auto future = pose_estimation_client_->async_send_request(request);
-    if (future.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
+    if (future.wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
         RCLCPP_ERROR(get_logger(), "PoseEstimation service request timed out");
         return false;
     }
@@ -303,6 +303,7 @@ bool BoxProcessorNode::getPlacementPose(const geometry_msgs::msg::Vector3& dimen
     RCLCPP_INFO(get_logger(), "Place holder dimensions before swapping: [%d, %d]", place_holder_dimension_x, place_holder_dimension_y);
     
     // Swap dimensions based on the best index
+    
     if (best_index == 1 || best_index == 3) {
         int temp = place_holder_dimension_x;
         place_holder_dimension_x = place_holder_dimension_y;
@@ -396,7 +397,21 @@ bool BoxProcessorNode::getPlacementPose(const geometry_msgs::msg::Vector3& dimen
         
         
         // Only check indices 0 and 2 (0° and 180°)
-        for (int i : {0, 2}) {
+        for (int i : {0, 1, 2, 3}) {
+
+            if (best_index == 1 || best_index == 3) {
+                // Only consider orientations 1 and 3
+                if (i == 0 || i == 2) {
+                    continue; // Skip this iteration
+                }
+            }
+            else {
+                // Only consider orientations 0 and 2
+                if (i == 1 || i == 3) {
+                    continue; // Skip this iteration
+                }
+            }
+
             auto& candidate_quat = candidate_quats[i];
             
             // Calculate dot product between quaternions
@@ -419,7 +434,21 @@ bool BoxProcessorNode::getPlacementPose(const geometry_msgs::msg::Vector3& dimen
         
         
         // Only check indices 1 and 3 (90° and 270°)
-        for (int i : {1, 3}) {
+        for (int i : {0, 1, 2, 3}) {
+
+            if (best_index == 1 || best_index == 3) {
+                // Only consider orientations 1 and 3
+                if (i == 1 || i == 3) {
+                    continue; // Skip this iteration
+                }
+            }
+            else {
+                // Only consider orientations 0 and 2
+                if (i == 0 || i == 2) {
+                    continue; // Skip this iteration
+                }
+            }
+
             auto& candidate_quat = candidate_quats[i];
             
             // Calculate dot product between quaternions
