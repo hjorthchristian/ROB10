@@ -398,8 +398,7 @@ class RANSACSegmentationService(Node):
             
             # Process each detected mask with RANSAC
             visualized_image = rgb_copy.copy()
-            best_plane_info = None
-            best_object_id = None
+            plane_candidates = []
             
             for i in range(len(segment_response.labels)):
                 label = segment_response.labels[i]
@@ -437,18 +436,39 @@ class RANSACSegmentationService(Node):
                     if plane_info is not None:
                         # Store plane info and inlier pixels
                         plane_info["inlier_pixels_xy"] = original_pixels_xy[plane_info["inlier_indices"]] if original_pixels_xy is not None else None
+                        plane_info["object_id"] = i
+                        plane_info["label"] = label
+                        plane_info["score"] = score
                         
-                        # Check if this is the best plane so far (you can use different criteria)
-                        if best_plane_info is None or plane_info["inlier_count"] > best_plane_info["inlier_count"]:
-                            best_plane_info = plane_info
-                            best_object_id = i
-                            
-                        self.get_logger().info(f'-> Found plane for object {i} with {plane_info["inlier_count"]} inliers')
+                        # Add to candidates list instead of immediately choosing best
+                        plane_candidates.append(plane_info)
+                        
+                        self.get_logger().info(f'-> Found plane for object {i} with {plane_info["inlier_count"]} inliers at z={plane_info["center"][2]:.4f}m')
                     else:
                         self.get_logger().info(f"-> Could not find a suitable plane for object {i}")
                 else:
                     self.get_logger().info(f"-> Not enough valid 3D points for object {i}")
             
+            # Select best candidate based on Z position (tallest object)
+            best_plane_info = None
+            best_object_id = None
+            
+            if plane_candidates:
+                # Sort candidates by Z position (ASCENDING order - largest Z value first, as Z points up)
+                sorted_candidates = sorted(plane_candidates, key=lambda x: x["center"][2], reverse=True)
+                best_plane_info = sorted_candidates[0]
+                best_object_id = best_plane_info["object_id"]
+                
+                # Log all candidates for debugging
+                self.get_logger().info(f"Found {len(plane_candidates)} valid plane candidates:")
+                for i, candidate in enumerate(sorted_candidates):
+                    self.get_logger().info(f"  #{i+1}: Object {candidate['object_id']} ({candidate['label']}) - z={candidate['center'][2]:.4f}m, {candidate['inlier_count']} inliers")
+                
+                self.get_logger().info(f"Selected object {best_object_id} as the highest object (z={best_plane_info['center'][2]:.4f}m)")
+            
+            # Highlight inliers for the best plane
+            if best_plane_info is not None and best_object_id is not None:
+                self.get_logger().info(f"Selected object {best_object_id} with {best_plane_info['inlier_count']} inliers as best result")
             # Highlight inliers for the best plane
             if best_plane_info is not None and best_object_id is not None:
                 self.get_logger().info(f"Selected object {best_object_id} with {best_plane_info['inlier_count']} inliers as best result")

@@ -71,12 +71,12 @@ void BoxProcessorNode::initialize() {
     move_group_->setPoseReferenceFrame("ur10_base_link");
     
     // Set planning parameters with improved values
-    move_group_->setMaxVelocityScalingFactor(0.01);
-    move_group_->setMaxAccelerationScalingFactor(0.01);
-    move_group_->setPlanningTime(10.0);
+    move_group_->setMaxVelocityScalingFactor(0.1);
+    move_group_->setMaxAccelerationScalingFactor(0.1);
+    move_group_->setPlanningTime(20.0);
     move_group_->setNumPlanningAttempts(20);
-    move_group_->setGoalPositionTolerance(0.005);
-    move_group_->setGoalOrientationTolerance(0.03);
+    move_group_->setGoalPositionTolerance(0.01);
+    move_group_->setGoalOrientationTolerance(0.02);
     
     // Wait for services to be available
     if (!pose_estimation_client_->wait_for_service(std::chrono::seconds(5))) {
@@ -118,12 +118,10 @@ bool BoxProcessorNode::isPositionFeasible(const geometry_msgs::msg::Pose& pose) 
 }
 
 bool BoxProcessorNode::goToHomePosition() {
-    RCLCPP_INFO(get_logger(), "Moving to home position [%f, %f, %f]...", 
-                HOME_POSITION_X, HOME_POSITION_Y, HOME_POSITION_Z);
-    
-    // Get current pose
+    RCLCPP_INFO(get_logger(), "Moving to home position [%f, %f, %f]...", HOME_POSITION_X, HOME_POSITION_Y, HOME_POSITION_Z);
+
     geometry_msgs::msg::PoseStamped current_pose = move_group_->getCurrentPose();
-    
+
     // Create the home position target
     geometry_msgs::msg::Pose home_pose = current_pose.pose;
     home_pose.position.x = HOME_POSITION_X;
@@ -136,27 +134,32 @@ bool BoxProcessorNode::goToHomePosition() {
     home_pose.orientation.w = -0.001;
     
     // Set reasonable velocity for home position motion
-    move_group_->setMaxVelocityScalingFactor(0.05);
-    move_group_->setMaxAccelerationScalingFactor(0.05);
+    move_group_->setMaxVelocityScalingFactor(0.1);
+    move_group_->setMaxAccelerationScalingFactor(0.1);
     
-    // Plan and move to home position
+    // Use joint space planning instead of Cartesian path
+    move_group_->setPlanningTime(5.0);
+    move_group_->setNumPlanningAttempts(10);
+    
+    // Set target pose and plan
     move_group_->setPoseTarget(home_pose);
     moveit::planning_interface::MoveGroupInterface::Plan plan;
-    moveit::core::MoveItErrorCode error_code = move_group_->plan(plan);
-    bool success = (error_code == moveit::core::MoveItErrorCode::SUCCESS);
     
-    if (!success) {
-        RCLCPP_ERROR(get_logger(), "Failed to plan to home position");
+    auto error_code = move_group_->plan(plan);
+    if (error_code != moveit::core::MoveItErrorCode::SUCCESS) {
+        RCLCPP_ERROR(get_logger(), "Failed to plan motion to home position");
         return false;
     }
     
-    error_code = move_group_->execute(plan);
-    success = (error_code == moveit::core::MoveItErrorCode::SUCCESS);
+    RCLCPP_INFO(get_logger(), "Executing plan to home position");
+    bool success = (move_group_->execute(plan) == moveit::core::MoveItErrorCode::SUCCESS);
     
     if (!success) {
         RCLCPP_ERROR(get_logger(), "Failed to move to home position");
         return false;
     }
+    
+                
     
     // Get current joint values to set wrist_3 joint to zero
     std::vector<double> joint_values = move_group_->getCurrentJointValues();
@@ -278,7 +281,7 @@ bool BoxProcessorNode::detectBox(geometry_msgs::msg::PoseStamped& box_pose,
     dimensions.x = response->x_width / 100.0;
     dimensions.y = response->y_length / 100.0;
     dimensions.z = response->z_height / 100.0;
-    box_pose.pose.position.z += 0.118;
+    box_pose.pose.position.z += 0.1205;
     
     RCLCPP_INFO(get_logger(), "Detected box at position: [%f, %f, %f] with dimensions: [%f, %f, %f]",
         box_pose.pose.position.x, box_pose.pose.position.y, box_pose.pose.position.z,
@@ -499,7 +502,7 @@ bool BoxProcessorNode::getPlacementPose(const geometry_msgs::msg::Vector3& dimen
 
 
     place_pose.pose.orientation = candidate_quats[new_best_index]; // Use first orientation
-    place_pose.pose.position.z += 0.12; // Adjust height for placement
+    place_pose.pose.position.z += 0.1; // Adjust height for placement
     
     RCLCPP_INFO(get_logger(), "Place position determined: [%f, %f, %f]",
         place_pose.pose.position.x, place_pose.pose.position.y, place_pose.pose.position.z);
@@ -508,8 +511,8 @@ bool BoxProcessorNode::getPlacementPose(const geometry_msgs::msg::Vector3& dimen
 
 bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose) {
   // Set faster velocity for pre-grasp motion
-  move_group_->setMaxVelocityScalingFactor(0.05);
-  move_group_->setMaxAccelerationScalingFactor(0.05);
+  move_group_->setMaxVelocityScalingFactor(0.1);
+  move_group_->setMaxAccelerationScalingFactor(0.1);
   //setWristConstraint();
 
   // First move to a pre-grasp pose (30cm above the object)
@@ -520,22 +523,23 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
   
   // Log the target pose for debugging
   RCLCPP_INFO(get_logger(), "Planning to pre-grasp pose: [%f, %f, %f]...",
-      pre_grasp_pose.position.x, pre_grasp_pose.position.y, pre_grasp_pose.position.z);
-  
-  // Plan and move to pre-grasp pose
-  move_group_->setPoseTarget(pre_grasp_pose);
-  moveit::planning_interface::MoveGroupInterface::Plan plan;
-  moveit::core::MoveItErrorCode error_code = move_group_->plan(plan);
-  bool success = (error_code == moveit::core::MoveItErrorCode::SUCCESS);
-  if (!success) {
-      RCLCPP_ERROR(get_logger(), "Failed to plan to pre-grasp position");
-      //clearConstraints();
-      return false;
-  }
+  pre_grasp_pose.position.x, pre_grasp_pose.position.y, pre_grasp_pose.position.z);
+  std::vector<geometry_msgs::msg::Pose> waypoints;
+  waypoints.push_back(pre_grasp_pose);
 
-  
-  error_code = move_group_->execute(plan);
-  success = (error_code == moveit::core::MoveItErrorCode::SUCCESS);
+  moveit_msgs::msg::RobotTrajectory trajectory;
+  double eef_step = 0.01; // 1cm step
+  double fraction = move_group_->computeCartesianPath(waypoints, eef_step, trajectory);
+
+  if (fraction < 0.975) {
+      RCLCPP_ERROR(get_logger(), "Failed to compute Cartesian path to pre-grasp position (coverage: %f)", fraction);
+      return false;
+        }
+  // Create a plan from the trajectory and execute it
+  moveit::planning_interface::MoveGroupInterface::Plan plan;
+  plan.trajectory = trajectory;
+
+  bool success = (move_group_->execute(plan) == moveit::core::MoveItErrorCode::SUCCESS);     
   if (!success) {
       RCLCPP_ERROR(get_logger(), "Failed to move to pre-grasp position");
       //clearConstraints();
@@ -565,17 +569,16 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
   rclcpp::sleep_for(std::chrono::seconds(2));
   
   // Slower velocity for actual grasp motion
-  move_group_->setMaxVelocityScalingFactor(0.01);
-  move_group_->setMaxAccelerationScalingFactor(0.01);
+  move_group_->setMaxVelocityScalingFactor(0.005);
+  move_group_->setMaxAccelerationScalingFactor(0.005);
   
   // Plan and execute Cartesian path to grasp pose
-  std::vector<geometry_msgs::msg::Pose> waypoints;
+  waypoints.clear();
   waypoints.push_back(pick_pose.pose);
   
-  moveit_msgs::msg::RobotTrajectory trajectory;
-  double eef_step = 0.005; // 5mm step
-  double fraction = move_group_->computeCartesianPath(waypoints, eef_step, trajectory);
-  if (fraction < 0.8) {
+  eef_step = 0.005; // 5mm step
+  fraction = move_group_->computeCartesianPath(waypoints, eef_step, trajectory);
+  if (fraction < 0.975) {
       RCLCPP_ERROR(get_logger(), "Failed to compute Cartesian path to grasp position");
       return false;
   }
@@ -591,7 +594,7 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
   //setWristConstraint();
   // Set faster velocity for lift motion
   move_group_->setMaxVelocityScalingFactor(0.0075);
-  move_group_->setMaxAccelerationScalingFactor(0.0075);
+  move_group_->setMaxAccelerationScalingFactor(0.075);
   
   // Lift the object (20cm up)
   waypoints.clear();
@@ -599,7 +602,7 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
   lift_pose.position.z += 0.4;
   waypoints.push_back(lift_pose);
   fraction = move_group_->computeCartesianPath(waypoints, eef_step, trajectory);
-  if (fraction < 0.8) {
+  if (fraction < 0.975) {
       RCLCPP_ERROR(get_logger(), "Failed to compute Cartesian path for lifting");
       return false;
   }
@@ -610,12 +613,12 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
       RCLCPP_ERROR(get_logger(), "Failed to lift object");
       return false;
   }
-  move_group_->setMaxVelocityScalingFactor(0.05);
-  move_group_->setMaxAccelerationScalingFactor(0.05);
+  move_group_->setMaxVelocityScalingFactor(0.1);
+  move_group_->setMaxAccelerationScalingFactor(0.1);
   waypoints.clear();
   geometry_msgs::msg::Pose safety_pose = lift_pose;
-  safety_pose.position.x = 0.819;
-  safety_pose.position.y = 0.884;
+  safety_pose.position.x = 0.539;
+  safety_pose.position.y = 0.734;
   // Keep same z-height and orientation as lift_pose
   
   RCLCPP_INFO(get_logger(), "Moving to safety waypoint at [%f, %f, %f]",
@@ -623,7 +626,7 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
   
   waypoints.push_back(safety_pose);
   fraction = move_group_->computeCartesianPath(waypoints, eef_step, trajectory);
-  if (fraction < 0.8) {
+  if (fraction < 0.975) {
       RCLCPP_ERROR(get_logger(), "Failed to compute Cartesian path to safety waypoint");
       return false;
   }
@@ -653,8 +656,8 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
       joint_values[wrist3_index] = 0.0;
       
       // Set slower speed for joint adjustment
-      move_group_->setMaxVelocityScalingFactor(0.05);
-      move_group_->setMaxAccelerationScalingFactor(0.05);
+      move_group_->setMaxVelocityScalingFactor(0.15);
+      move_group_->setMaxAccelerationScalingFactor(0.15);
       
       // Plan and execute joint space move
       move_group_->setJointValueTarget(joint_values);
@@ -686,8 +689,8 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
 bool BoxProcessorNode::placeBox(const geometry_msgs::msg::PoseStamped& place_pose) {
   // Set faster velocity for pre-place motion
    // Set faster velocity for pre-place motion
-   move_group_->setMaxVelocityScalingFactor(0.05);
-   move_group_->setMaxAccelerationScalingFactor(0.05);
+   move_group_->setMaxVelocityScalingFactor(0.1);
+   move_group_->setMaxAccelerationScalingFactor(0.1);
  
    // Get current pose to use as starting point for Cartesian path
    geometry_msgs::msg::PoseStamped current_pose = move_group_->getCurrentPose();
@@ -703,10 +706,10 @@ bool BoxProcessorNode::placeBox(const geometry_msgs::msg::PoseStamped& place_pos
    waypoints.push_back(pre_place_pose);
    
    moveit_msgs::msg::RobotTrajectory trajectory;
-   double eef_step = 0.005; // 2cm step
+   double eef_step = 0.01; // 2cm step
    double fraction = move_group_->computeCartesianPath(waypoints, eef_step, trajectory);
    
-   if (fraction < 0.8) {
+   if (fraction < 0.975) {
        RCLCPP_ERROR(get_logger(), "Failed to compute Cartesian path to pre-place position (coverage: %f)", fraction);
        return false;
    }
@@ -731,7 +734,7 @@ bool BoxProcessorNode::placeBox(const geometry_msgs::msg::PoseStamped& place_pos
   waypoints.clear();
   waypoints.push_back(target_pose.pose);
   fraction = move_group_->computeCartesianPath(waypoints, eef_step, trajectory);
-  if (fraction < 0.8) {
+  if (fraction < 0.975) {
       RCLCPP_ERROR(get_logger(), "Failed to compute Cartesian path to place position");
       return false;
   }
@@ -760,14 +763,14 @@ bool BoxProcessorNode::placeBox(const geometry_msgs::msg::PoseStamped& place_pos
   }
   
   // Set faster velocity for retreat motion
-  move_group_->setMaxVelocityScalingFactor(0.05);
-  move_group_->setMaxAccelerationScalingFactor(0.05);
+  move_group_->setMaxVelocityScalingFactor(0.15);
+  move_group_->setMaxAccelerationScalingFactor(0.15);
   
   // Retreat (20cm up)
   waypoints.clear();
   waypoints.push_back(pre_place_pose);
   fraction = move_group_->computeCartesianPath(waypoints, eef_step, trajectory);
-  if (fraction < 0.8) {
+  if (fraction < 0.975) {
       RCLCPP_ERROR(get_logger(), "Failed to compute Cartesian path for retreat");
       return false;
   }
@@ -782,16 +785,21 @@ bool BoxProcessorNode::placeBox(const geometry_msgs::msg::PoseStamped& place_pos
 
   waypoints.clear();
   geometry_msgs::msg::Pose safety_pose = pre_place_pose;
-  safety_pose.position.x = 0.819;
-  safety_pose.position.y = 0.884;
+  safety_pose.position.x = 0.539;
+  safety_pose.position.y = 0.734;
   // Keep same z-height and orientation as pre_place_pose
+
+  //Get current orientation to use as safepoint orientation
+  current_pose = move_group_->getCurrentPose();
+  safety_pose.orientation = current_pose.pose.orientation;
+
   
   RCLCPP_INFO(get_logger(), "Moving to safety waypoint at [%f, %f, %f]",
       safety_pose.position.x, safety_pose.position.y, safety_pose.position.z);
   
   waypoints.push_back(safety_pose);
   fraction = move_group_->computeCartesianPath(waypoints, eef_step, trajectory);
-  if (fraction < 0.8) {
+  if (fraction < 0.975) {
       RCLCPP_ERROR(get_logger(), "Failed to compute Cartesian path to safety waypoint");
       return false;
   }
@@ -803,45 +811,7 @@ bool BoxProcessorNode::placeBox(const geometry_msgs::msg::PoseStamped& place_pos
       return false;
   }
 
-  std::vector<double> joint_values = move_group_->getCurrentJointValues();
   
-  // Find the index of wrist_3 joint
-  const std::vector<std::string>& joint_names = move_group_->getJointNames();
-  int wrist3_index = -1;
-  for (size_t i = 0; i < joint_names.size(); i++) {
-      if (joint_names[i] == "ur10_wrist_3_joint") {
-          wrist3_index = i;
-          break;
-      }
-  }
-  
-  if (wrist3_index != -1) {
-      // Set wrist_3 joint to zero
-      joint_values[wrist3_index] = 0.0;
-      
-      // Set slower speed for joint adjustment
-      move_group_->setMaxVelocityScalingFactor(0.05);
-      move_group_->setMaxAccelerationScalingFactor(0.05);
-      
-      // Plan and execute joint space move
-      move_group_->setJointValueTarget(joint_values);
-      moveit::planning_interface::MoveGroupInterface::Plan joint_plan;
-      success = (move_group_->plan(joint_plan) == moveit::core::MoveItErrorCode::SUCCESS);
-      
-      if (success) {
-          RCLCPP_INFO(get_logger(), "Executing wrist adjustment plan before home position");
-          success = (move_group_->execute(joint_plan) == moveit::core::MoveItErrorCode::SUCCESS);
-          if (!success) {
-              RCLCPP_WARN(get_logger(), "Failed to adjust wrist_3 joint before home, continuing anyway");
-              // Don't return false, just continue with the operation
-          }
-      } else {
-          RCLCPP_WARN(get_logger(), "Failed to plan wrist_3 adjustment before home, continuing anyway");
-      }
-  } else {
-      RCLCPP_WARN(get_logger(), "Could not find ur10_wrist_3_joint in joint names, skipping adjustment");
-  }
-
   // After reaching the safety waypoint, go back to home position
   RCLCPP_INFO(get_logger(), "Moving back to home position");
   if (!goToHomePosition()) {
