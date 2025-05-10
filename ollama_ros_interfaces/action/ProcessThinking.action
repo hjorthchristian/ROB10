@@ -1,0 +1,8 @@
+# llm_interfaces/action/ProcessThinking.action
+string model_name
+string prompt
+---
+string answer
+---
+string partial_content
+bool is_thinking
