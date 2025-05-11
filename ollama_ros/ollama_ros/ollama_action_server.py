@@ -4,7 +4,7 @@ from rclpy.node import Node
 from rclpy.action import ActionServer
 import ollama
 
-from ollama_interfaces.action import ProcessThinking
+from ollama_ros_interfaces.action import ProcessThinking
 
 class Qwen3ThinkingServer(Node):
     def __init__(self):

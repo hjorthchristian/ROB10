@@ -3,6 +3,7 @@ string model_name
 string prompt
 ---
 string answer
+bool success
 ---
 string partial_content
 bool is_thinking
