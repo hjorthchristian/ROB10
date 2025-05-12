@@ -1252,8 +1252,8 @@ class BoxStackService(Node):
         
         # Place the box (in optimizer's internal units)
         success, position, quat = self.optimizer.add_box(
-            request.length, 
             request.width, 
+            request.length, 
             request.height,
             request.change_stack_allowed
         )
@@ -1263,12 +1263,15 @@ class BoxStackService(Node):
             response.success = True
             
             # Determine the actual dimensions of the box based on rotation (still in optimizer units)
+            #Log Quaternion
+            self.get_logger().info(f'Box quaternion: [{quat[0]:.4f}, {quat[1]:.4f}, {quat[2]:.4f}, {quat[3]:.4f}]')
+
             if quat[2] > 0:  # Rotated 90 degrees around z-axis
-                box_length = request.width
-                box_width = request.length
-            else:
                 box_length = request.length
                 box_width = request.width
+            else:
+                box_length = request.width
+                box_width = request.length
             
             # Calculate center position from corner position in local coordinates (optimizer units)
             local_center_x = position[0] + box_length / 2

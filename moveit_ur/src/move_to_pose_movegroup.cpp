@@ -6,6 +6,8 @@
 #include <thread>
 #include "vg_control_interfaces/srv/vacuum_set.hpp"
 #include "vg_control_interfaces/srv/vacuum_release.hpp"
+#include <std_msgs/msg/int32.hpp>
+#include <algorithm> // For std::min
 
 class BoxProcessorNode : public rclcpp::Node {
 public:
@@ -29,6 +31,16 @@ private:
     // Check if position is feasible for planning
     bool isPositionFeasible(const geometry_msgs::msg::Pose& pose);
 
+    float vacuum_level_a_ = 0.0;
+    float vacuum_level_b_ = 0.0;
+    bool grasp_ready_ = false;
+    rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr vacuum_a_sub_;
+    rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr vacuum_b_sub_;
+
+    void vacuum_a_callback(const std_msgs::msg::Int32::SharedPtr msg);
+    void vacuum_b_callback(const std_msgs::msg::Int32::SharedPtr msg);
+    void check_vacuum_levels();
+
     int best_index = 10;
 
     
@@ -49,6 +61,26 @@ private:
     const double HOME_POSITION_Y = 0.641;
     const double HOME_POSITION_Z = -0.406;
 };
+
+void BoxProcessorNode::vacuum_a_callback(const std_msgs::msg::Int32::SharedPtr msg) {
+    vacuum_level_a_ = msg->data;
+    RCLCPP_DEBUG(get_logger(), "Vacuum A level: %.1f", vacuum_level_a_);
+    check_vacuum_levels();
+}
+
+void BoxProcessorNode::vacuum_b_callback(const std_msgs::msg::Int32::SharedPtr msg) {
+    vacuum_level_b_ = msg->data;
+    RCLCPP_DEBUG(get_logger(), "Vacuum B level: %.1f", vacuum_level_b_);
+    check_vacuum_levels();
+}
+
+void BoxProcessorNode::check_vacuum_levels() {
+    if (vacuum_level_a_ + vacuum_level_b_ >= 180) {
+        grasp_ready_ = true;
+        RCLCPP_INFO(get_logger(), "Grasp ready! Both vacuum levels are above threshold.");
+    }
+}
+
 
 BoxProcessorNode::BoxProcessorNode(const std::string &node_name)
     : Node(node_name)
@@ -96,7 +128,16 @@ void BoxProcessorNode::initialize() {
     if (!vacuum_release_client_->wait_for_service(std::chrono::seconds(5))) {
         RCLCPP_ERROR(get_logger(), "VacuumRelease service not available");
     }
-  
+    
+        // In your initialization method
+    vacuum_a_sub_ = create_subscription<std_msgs::msg::Int32>(
+        "/vacuum_level_a", 10, 
+        std::bind(&BoxProcessorNode::vacuum_a_callback, this, std::placeholders::_1));
+        
+    vacuum_b_sub_ = create_subscription<std_msgs::msg::Int32>(
+        "/vacuum_level_b", 10, 
+        std::bind(&BoxProcessorNode::vacuum_b_callback, this, std::placeholders::_1));
+
 
 }
 
@@ -228,6 +269,7 @@ bool BoxProcessorNode::detectBox(geometry_msgs::msg::PoseStamped& box_pose,
     // Get current robot orientation
     geometry_msgs::msg::PoseStamped current_pose = move_group_->getCurrentPose();
     auto current_quat = current_pose.pose.orientation;
+    best_index = 10;
 
     //Log current robot orientation
     RCLCPP_INFO(get_logger(), "Current robot orientation: [%f, %f, %f, %f]", 
@@ -384,17 +426,18 @@ bool BoxProcessorNode::getPlacementPose(const geometry_msgs::msg::Vector3& dimen
     
 
     // Check which of the two possible quaternions we have
-    bool is_identity_rotation = std::abs(response->orientations[0].w - 1.0) < 0.01 && 
-                        std::abs(response->orientations[0].x) < 0.01 && 
-                        std::abs(response->orientations[0].y) < 0.01 && 
-                        std::abs(response->orientations[0].z) < 0.01;
+    bool is_identity_rotation = std::abs(response->orientations[0].x - 1.0) < 0.01 && 
+                            std::abs(response->orientations[0].y) < 0.01 && 
+                            std::abs(response->orientations[0].z) < 0.01 && 
+                            std::abs(response->orientations[0].w) < 0.01;
 
-    bool is_90_degree_rotation = std::abs(response->orientations[0].w - 0.7071) < 0.01 && 
-                        std::abs(response->orientations[0].x) < 0.01 && 
-                        std::abs(response->orientations[0].y) < 0.01 && 
-                        std::abs(response->orientations[0].z - 0.7071) < 0.01;
-
-    
+    bool is_90_degree_rotation = std::abs(response->orientations[0].x - 0.7071) < 0.01 && 
+                            std::abs(response->orientations[0].y - 0.7071) < 0.01 && 
+                            std::abs(response->orientations[0].z) < 0.01 && 
+                            std::abs(response->orientations[0].w) < 0.01;
+        // Log the identity and 90 degree rotation checks
+    RCLCPP_INFO(get_logger(), "Is identity rotation: %s", is_identity_rotation ? "true" : "false");
+    RCLCPP_INFO(get_logger(), "Is 90 degree rotation: %s", is_90_degree_rotation ? "true" : "false");
     if (is_identity_rotation) {
         // We only consider orientations 0 and 2 (0° and 180°)
         
@@ -470,9 +513,9 @@ bool BoxProcessorNode::getPlacementPose(const geometry_msgs::msg::Vector3& dimen
     } 
     // Fallback: If neither of the expected quaternions, use standard comparison
     else {
-        // Define fixed candidate quaternions
+        //Log here
         
-        
+        RCLCPP_INFO(get_logger(), "Neither identity nor 90 degree rotation detected.");
         // Check all orientations
         for (size_t i = 0; i < candidate_quats.size(); i++) {
             auto& candidate_quat = candidate_quats[i];
@@ -520,6 +563,13 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
   pre_grasp_pose.position.z += 0.1;
   geometry_msgs::msg::PoseStamped current_robot_pose = move_group_->getCurrentPose();
 
+  //Pick pose log
+  RCLCPP_INFO(get_logger(), "Pick pose: [%f, %f, %f] with orientation [%f, %f, %f, %f]",
+      pick_pose.pose.position.x, pick_pose.pose.position.y, pick_pose.pose.position.z,
+      pick_pose.pose.orientation.w, pick_pose.pose.orientation.x,
+      pick_pose.pose.orientation.y, pick_pose.pose.orientation.z);
+
+
   
   // Log the target pose for debugging
   RCLCPP_INFO(get_logger(), "Planning to pre-grasp pose: [%f, %f, %f]...",
@@ -547,22 +597,8 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
   }
   //clearConstraints();
 
-  // Activate vacuum gripper
-  auto vacuum_request = std::make_shared<vg_control_interfaces::srv::VacuumSet::Request>();
-  vacuum_request->channel_a = 210; // vacuum
-  vacuum_request->channel_b = 210; // vacuum
   
-  auto vacuum_future = vacuum_set_client_->async_send_request(vacuum_request);
-  if (vacuum_future.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
-      RCLCPP_ERROR(get_logger(), "VacuumSet service request timed out");
-      return false;
-  }
-  
-  auto vacuum_response = vacuum_future.get();
-  if (!vacuum_response->success) {
-      RCLCPP_ERROR(get_logger(), "VacuumSet service failed: %s", vacuum_response->message.c_str());
-      return false;
-  }
+  grasp_ready_ = false;
   
   // Wait for 2 seconds to ensure proper grip
   RCLCPP_INFO(get_logger(), "Waiting 2 seconds for vacuum grip to stabilize");
@@ -571,35 +607,112 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
   // Slower velocity for actual grasp motion
   move_group_->setMaxVelocityScalingFactor(0.005);
   move_group_->setMaxAccelerationScalingFactor(0.005);
+
+  geometry_msgs::msg::Pose incremental_start_pose = pick_pose.pose;
+  incremental_start_pose.position.z += 0.05;
   
   // Plan and execute Cartesian path to grasp pose
   waypoints.clear();
-  waypoints.push_back(pick_pose.pose);
+  waypoints.push_back(incremental_start_pose);
   
-  eef_step = 0.005; // 5mm step
   fraction = move_group_->computeCartesianPath(waypoints, eef_step, trajectory);
-  if (fraction < 0.975) {
-      RCLCPP_ERROR(get_logger(), "Failed to compute Cartesian path to grasp position");
-      return false;
-  }
+    if (fraction < 0.975) {
+        RCLCPP_ERROR(get_logger(), "Failed to compute Cartesian path to incremental start position");
+        //Fraction log
+        RCLCPP_ERROR(get_logger(), "Coverage: %f", fraction);
+        return false;
+    }
+    
+    plan.trajectory = trajectory;
+    success = (move_group_->execute(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+    if (!success) {
+        RCLCPP_ERROR(get_logger(), "Failed to move to incremental start position");
+        return false;
+    }
+
+        // Activate vacuum gripper
+    auto vacuum_request = std::make_shared<vg_control_interfaces::srv::VacuumSet::Request>();
+    vacuum_request->channel_a = 210; // vacuum
+    vacuum_request->channel_b = 210; // vacuum
+    
+    auto vacuum_future = vacuum_set_client_->async_send_request(vacuum_request);
+    if (vacuum_future.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
+        RCLCPP_ERROR(get_logger(), "VacuumSet service request timed out");
+        return false;
+    }
+    
+    auto vacuum_response = vacuum_future.get();
+    if (!vacuum_response->success) {
+        RCLCPP_ERROR(get_logger(), "VacuumSet service failed: %s", vacuum_response->message.c_str());
+        return false;
+    }
   
-  plan.trajectory = trajectory;
-  success = (move_group_->execute(plan) == moveit::core::MoveItErrorCode::SUCCESS);
-  if (!success) {
-      RCLCPP_ERROR(get_logger(), "Failed to move to grasp position");
-      return false;
-  }
+    
+     // Now begin the incremental approach with 0.5cm steps
+    double increment = 0.005; // 0.5cm increments
+    double remaining_distance = 0.15; // 5cm total
+    geometry_msgs::msg::Pose next_pose = incremental_start_pose;
+
+    RCLCPP_INFO(get_logger(), "Starting incremental approach with %.1fmm steps", increment * 1000);
+    
+    while (remaining_distance > 0 && !grasp_ready_ && rclcpp::ok()) {
+        // Get current pose
+        
+        // Calculate next step position
+        double step_distance = std::min(increment, remaining_distance);
+        next_pose.position.z -= step_distance;
+        
+        // RCLCPP_INFO for current step
+        RCLCPP_INFO(get_logger(), "Moving down %.1fmm. Current vacuum levels: A=%.1f, B=%.1f", 
+                    step_distance * 1000, vacuum_level_a_, vacuum_level_b_);
+        
+        // Execute the small movement
+        waypoints.clear();
+        waypoints.push_back(next_pose);
+        
+        fraction = move_group_->computeCartesianPath(waypoints, 0.001, trajectory); // Smaller step for precision
+        if (fraction < 0.975) {
+            RCLCPP_ERROR(get_logger(), "Failed to compute Cartesian path for incremental step");
+            return false;
+        }
+        
+        plan.trajectory = trajectory;
+        success = (move_group_->execute(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+        if (!success) {
+            RCLCPP_ERROR(get_logger(), "Failed to execute incremental step");
+            return false;
+        }
+        
+        // Update remaining distance
+        remaining_distance -= step_distance;
+        
+        // Small delay for vacuum levels to update
+        rclcpp::sleep_for(std::chrono::milliseconds(100));
+        
+        // Check vacuum levels (the callback will update grasp_ready_)
+        if (grasp_ready_) {
+            RCLCPP_INFO(get_logger(), "Sufficient vacuum achieved! Stopping descent.");
+            break;
+        }
+    }
+    
+    // If we completed the approach without getting sufficient vacuum
+    if (!grasp_ready_) {
+        RCLCPP_WARN(get_logger(), "Completed approach without achieving sufficient vacuum levels.");
+        // Continue anyway, maybe we have enough vacuum to lift
+    }
+    
   
   
   //setWristConstraint();
   // Set faster velocity for lift motion
-  move_group_->setMaxVelocityScalingFactor(0.0075);
-  move_group_->setMaxAccelerationScalingFactor(0.075);
+  move_group_->setMaxVelocityScalingFactor(0.1);
+  move_group_->setMaxAccelerationScalingFactor(0.1);
   
   // Lift the object (20cm up)
   waypoints.clear();
   geometry_msgs::msg::Pose lift_pose = pick_pose.pose;
-  lift_pose.position.z += 0.4;
+  lift_pose.position.z += 0.6;
   waypoints.push_back(lift_pose);
   fraction = move_group_->computeCartesianPath(waypoints, eef_step, trajectory);
   if (fraction < 0.975) {
@@ -689,14 +802,14 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
 bool BoxProcessorNode::placeBox(const geometry_msgs::msg::PoseStamped& place_pose) {
   // Set faster velocity for pre-place motion
    // Set faster velocity for pre-place motion
-   move_group_->setMaxVelocityScalingFactor(0.1);
-   move_group_->setMaxAccelerationScalingFactor(0.1);
+   move_group_->setMaxVelocityScalingFactor(0.15);
+   move_group_->setMaxAccelerationScalingFactor(0.15);
  
    // Get current pose to use as starting point for Cartesian path
    geometry_msgs::msg::PoseStamped current_pose = move_group_->getCurrentPose();
    
    geometry_msgs::msg::PoseStamped target_pose = place_pose;
-   target_pose.pose.position.z += 0.15; // Adjust height for placement
+   target_pose.pose.position.z += 0.35; // Adjust height for placement
    
    geometry_msgs::msg::Pose pre_place_pose = target_pose.pose;
    pre_place_pose.position.z += 0.1;

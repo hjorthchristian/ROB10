@@ -102,114 +102,101 @@ class BoxStackVisualizer(Node):
                     self.z_max = max_z
 
     def plot_box(self, box):
-        """Visualize a single box in 3D with proper quaternion orientation application"""
-        # Box dimensions
+        """Visualize a single box in 3D with proper center-to-corner conversion"""
+        # Box dimensions (original)
         width = box.width
         length = box.length
         height = box.height
-        #if box height not equal to z size then go up or som,ething like that gfor ground boxes
-        # Get box position (server reports position as corner, not center)
-        x = box.x
-        y = box.y
-        z = box.z   # Adjust if server reports z at top of box
-        # Important: Override the quaternion to keep boxes upright
-    # This cancels the rotation that's laying the boxes on their sides
+        
+        # Log original values and quaternion
         orig_quat = [box.orientation.w, box.orientation.x, box.orientation.y, box.orientation.z]
+        self.get_logger().info(f"Original quaternion: w={orig_quat[0]}, x={orig_quat[1]}, y={orig_quat[2]}, z={orig_quat[3]}")
+        self.get_logger().info(f"Original dimensions: length={length}, width={width}")
         
-        # Check if this is the problematic X-axis rotation quaternion (approximately [0.7071, 0.7071, 0, 0])
-        if np.isclose(orig_quat[0], 0.7071, atol=0.01) and np.isclose(orig_quat[1], 0.7071, atol=0.01):
-            # This is the problematic rotation - extract just the Z component if any
-            # For the common case, simply use identity quaternion
-            box.orientation.w = 1.0
-            box.orientation.x = 0.0
-            box.orientation.y = 0.0
-            box.orientation.z = 0.0
-            self.get_logger().info(f"Corrected problematic X-axis rotation for box {box.id}")
-        # If it's a different rotation, keep it as is
+        # CRITICAL FIX: Convert center position to corner position
+        center_x = box.x
+        center_y = box.y
+        center_z = box.z
         
-        self.get_logger().info(f"Plotting box {box.id}: pos=({x},{y},{z}), dims=({length},{width},{height})")
+        # Calculate corner coordinates
+        x = center_x - length/2
+        y = center_y - width/2
+        z = center_z - height  # The Z position is the top of the box, subtract height for bottom
         
-        # Define the vertices of the box (relative to corner)
+        self.get_logger().info(f"Converting from center ({center_x}, {center_y}, {center_z}) to corner ({x}, {y}, {z})")
+        
+        # Define the vertices of the box relative to the corner
         verts = [
-            [x, y, z],                         # bottom front left
-            [x + length, y, z],                # bottom front right
-            [x + length, y + width, z],        # bottom back right
-            [x, y + width, z],                 # bottom back left
-            [x, y, z + height],                # top front left
-            [x + length, y, z + height],       # top front right
-            [x + length, y + width, z + height], # top back right
-            [x, y + width, z + height],        # top back left
+            [x, y, z],
+            [x + length, y, z],
+            [x + length, y + width, z],
+            [x, y + width, z],
+            [x, y, z + height],
+            [x + length, y, z + height],
+            [x + length, y + width, z + height],
+            [x, y + width, z + height],
         ]
         
-        # Print initial vertices
-        self.get_logger().info(f"Initial vertices for box {box.id}:")
-        for i, v in enumerate(verts):
-            self.get_logger().info(f"  Vertex {i}: ({v[0]}, {v[1]}, {v[2]})")
-        
-        # Only apply quaternion rotation if it's not the identity quaternion
+        # Check if we need to apply the quaternion rotation
         quat = [box.orientation.w, box.orientation.x, box.orientation.y, box.orientation.z]
-        if not np.isclose(quat[0], 1.0) or not np.allclose(quat[1:], [0, 0, 0]):
-            # We have a real rotation to apply
+        
+        # Apply rotation if needed
+        # Fix X-axis rotation - use identity rotation instead
+        # The quaternion [0.7071, 0, 0, 0.7071] is a 90° X-axis rotation, but we want to avoid this
+        x_rotation_quat = np.isclose(quat[0], 0.7071, atol=0.01) and np.isclose(quat[1], 0.7071, atol=0.01)
+        
+        if x_rotation_quat:
+            # This is an X-axis rotation which is causing the boxes to be flipped 
+            # Instead of using this quaternion, use identity orientation for visualization
+            self.get_logger().info(f"Replacing problematic X-axis rotation with identity quaternion for box {box.id}")
+            rotation_matrix = np.eye(3)  # Identity matrix - no rotation
+        else:
+            # If it's a different rotation, convert to rotation matrix
             self.get_logger().info(f"Applying rotation: w={quat[0]}, x={quat[1]}, y={quat[2]}, z={quat[3]}")
-            
-            # Convert quaternion to rotation matrix
             rotation_matrix = quat2mat(quat)
-            self.get_logger().info(f"Rotation matrix:\n{rotation_matrix}")
-            
-            # Box center for rotation
-            center = np.array([
-                x + length/2,
-                y + width/2,
-                z + height/2
-            ])
-            self.get_logger().info(f"Rotation center: ({center[0]}, {center[1]}, {center[2]})")
-            
-            # Apply rotation around box center
-            rotated_verts = []
-            for i, v in enumerate(verts):
-                v_array = np.array(v)
-                # Vector from center to vertex
-                v_centered = v_array - center
-                # Apply rotation
-                v_rotated = np.dot(rotation_matrix, v_centered)
-                # Translate back
-                v_final = v_rotated + center
-                rotated_verts.append(v_final.tolist())
-                self.get_logger().info(f"  Vertex {i}: Original ({v[0]}, {v[1]}, {v[2]}) -> Rotated ({v_final[0]}, {v_final[1]}, {v_final[2]})")
-            
-            verts = rotated_verts
         
-        # Print final vertices
+        self.get_logger().info(f"Rotation matrix:\n{rotation_matrix}")
+        
+        # Calculate box center for rotation
+        center = np.array([
+            x + length/2,
+            y + width/2,
+            z + height/2
+        ])
+        
+        # Apply rotation around center
+        rotated_verts = []
+        for v in verts:
+            v_array = np.array(v)
+            v_centered = v_array - center
+            v_rotated = np.dot(rotation_matrix, v_centered)
+            v_final = v_rotated + center
+            rotated_verts.append(v_final.tolist())
+        
+        # Log the final vertices
         self.get_logger().info(f"Final vertices for box {box.id}:")
-        for i, v in enumerate(verts):
+        for i, v in enumerate(rotated_verts):
             self.get_logger().info(f"  Vertex {i}: ({v[0]}, {v[1]}, {v[2]})")
-        
-        # Get consistent color for this box ID
-        box_color = self.get_box_color(box.id)
         
         # Define faces using the standard order
         faces = [
-            [verts[0], verts[1], verts[2], verts[3]],  # bottom
-            [verts[4], verts[5], verts[6], verts[7]],  # top
-            [verts[0], verts[1], verts[5], verts[4]],  # front
-            [verts[1], verts[2], verts[6], verts[5]],  # right
-            [verts[2], verts[3], verts[7], verts[6]],  # back
-            [verts[3], verts[0], verts[4], verts[7]],  # left
+            [rotated_verts[0], rotated_verts[1], rotated_verts[2], rotated_verts[3]],  # bottom
+            [rotated_verts[4], rotated_verts[5], rotated_verts[6], rotated_verts[7]],  # top
+            [rotated_verts[0], rotated_verts[1], rotated_verts[5], rotated_verts[4]],  # front
+            [rotated_verts[1], rotated_verts[2], rotated_verts[6], rotated_verts[5]],  # right
+            [rotated_verts[2], rotated_verts[3], rotated_verts[7], rotated_verts[6]],  # back
+            [rotated_verts[3], rotated_verts[0], rotated_verts[4], rotated_verts[7]],  # left
         ]
         
-        # Log face information
-        for i, face in enumerate(faces):
-            self.get_logger().info(f"Face {i}: {face}")
-        
-        # Plot the box using Poly3DCollection
+        # Get consistent color for this box ID and plot
+        box_color = self.get_box_color(box.id)
         collection = Poly3DCollection(faces, facecolors=box_color, edgecolors='k', alpha=0.7)
         self.ax.add_collection3d(collection)
         
-        # Add box ID label near the top center of the box
-        label_x = x + length/2
-        label_y = y + width/2
-        label_z = z + height + 2  # Slightly above box
-        
+        # Add box ID label
+        label_x = center_x
+        label_y = center_y
+        label_z = center_z + 2  # Slightly above box
         label = self.ax.text(label_x, label_y, label_z, f"ID: {box.id}", 
                         color='black', backgroundcolor=box_color, 
                         fontweight='bold', fontsize=10)

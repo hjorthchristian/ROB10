@@ -44,11 +44,11 @@ class VGGripperNode(Node):
             10)
             
         # Publishers for vacuum levels
-        self.pub_vacuum_a = self.create_publisher(Int32, 'vacuum_level_a', 10)
-        self.pub_vacuum_b = self.create_publisher(Int32, 'vacuum_level_b', 10)
+        self.pub_vacuum_a = self.create_publisher(Int32, 'vacuum_level_a', 20)
+        self.pub_vacuum_b = self.create_publisher(Int32, 'vacuum_level_b', 20)
         
         # Timer for reading vacuum levels periodically
-        self.create_timer(1.0, self.read_vacuum_levels)
+        self.create_timer(0.05, self.read_vacuum_levels)
         
         self.get_logger().info(f'VG Gripper Node started, connected to {self.ip}:{self.port}')
 

@@ -1,8 +1,8 @@
 # llm_interfaces/action/ProcessThinking.action
-string model_name
 string prompt
 ---
 string answer
+string reasoning
 bool success
 ---
 string partial_content
