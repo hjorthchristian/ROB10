@@ -8,6 +8,10 @@
 #include "vg_control_interfaces/srv/vacuum_release.hpp"
 #include <std_msgs/msg/int32.hpp>
 #include <algorithm> // For std::min
+#include <cmath>
+#include "ollama_ros_interfaces/action/process_thinking.hpp"
+#include "rclcpp_action/rclcpp_action.hpp"
+
 
 class BoxProcessorNode : public rclcpp::Node {
 public:
@@ -31,8 +35,13 @@ private:
     // Check if position is feasible for planning
     bool isPositionFeasible(const geometry_msgs::msg::Pose& pose);
 
-    float vacuum_level_a_ = 0.0;
-    float vacuum_level_b_ = 0.0;
+    bool getObjectDescription(const std::string& user_command);
+  
+
+
+
+    int vacuum_level_a_ = 0.0;
+    int vacuum_level_b_ = 0.0;
     bool grasp_ready_ = false;
     rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr vacuum_a_sub_;
     rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr vacuum_b_sub_;
@@ -42,6 +51,13 @@ private:
     void check_vacuum_levels();
 
     int best_index = 10;
+
+    float box_height = 0.0;
+    float max_box_height = 0.0;
+
+    rclcpp_action::Client<ollama_ros_interfaces::action::ProcessThinking>::SharedPtr ollama_client_;
+    std::string current_object_description_;
+
 
     
 
@@ -62,22 +78,67 @@ private:
     const double HOME_POSITION_Z = -0.406;
 };
 
+bool BoxProcessorNode::getObjectDescription(const std::string& user_command) {
+    auto goal_msg = ollama_ros_interfaces::action::ProcessThinking::Goal();
+    goal_msg.prompt = user_command;
+    
+    // Send the goal without a callback - we'll wait for completion ourselves
+    auto send_goal_options = rclcpp_action::Client<ollama_ros_interfaces::action::ProcessThinking>::SendGoalOptions();
+    
+    // Send goal and wait for acceptance
+    auto goal_handle_future = ollama_client_->async_send_goal(goal_msg, send_goal_options);
+    if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), goal_handle_future) !=
+        rclcpp::FutureReturnCode::SUCCESS) {
+        RCLCPP_ERROR(get_logger(), "Failed to send goal to Ollama");
+        return false;
+    }
+    
+    // Get the goal handle
+    auto goal_handle = goal_handle_future.get();
+    if (!goal_handle) {
+        RCLCPP_ERROR(get_logger(), "Goal was rejected by the action server");
+        return false;
+    }
+    
+    // Request the result and wait for it
+    RCLCPP_INFO(get_logger(), "Waiting for Ollama to process...");
+    auto result_future = ollama_client_->async_get_result(goal_handle);
+    
+    if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), result_future) !=
+        rclcpp::FutureReturnCode::SUCCESS) {
+        RCLCPP_ERROR(get_logger(), "Failed to get object description result from Ollama");
+        return false;
+    }
+    
+    // Process the result
+    auto result = result_future.get();
+    if (result.result->success) {
+        current_object_description_ = result.result->answer;
+        RCLCPP_INFO(get_logger(), "Successfully received object description");
+        return true;
+    } else {
+        RCLCPP_ERROR(get_logger(), "Ollama action failed");
+        return false;
+    }
+}
+
+
 void BoxProcessorNode::vacuum_a_callback(const std_msgs::msg::Int32::SharedPtr msg) {
     vacuum_level_a_ = msg->data;
-    RCLCPP_DEBUG(get_logger(), "Vacuum A level: %.1f", vacuum_level_a_);
+    //RCLCPP_DEBUG(get_logger(), "Vacuum A level: %d", vacuum_level_a_);
     check_vacuum_levels();
 }
 
 void BoxProcessorNode::vacuum_b_callback(const std_msgs::msg::Int32::SharedPtr msg) {
     vacuum_level_b_ = msg->data;
-    RCLCPP_DEBUG(get_logger(), "Vacuum B level: %.1f", vacuum_level_b_);
+    //RCLCPP_DEBUG(get_logger(), "Vacuum B level: %d", vacuum_level_b_);
     check_vacuum_levels();
 }
 
 void BoxProcessorNode::check_vacuum_levels() {
-    if (vacuum_level_a_ + vacuum_level_b_ >= 180) {
+    if (vacuum_level_a_ + vacuum_level_b_ >= 120) {
         grasp_ready_ = true;
-        RCLCPP_INFO(get_logger(), "Grasp ready! Both vacuum levels are above threshold.");
+        //RCLCPP_INFO(get_logger(), "Grasp ready! Both vacuum levels are above threshold.");
     }
 }
 
@@ -90,7 +151,7 @@ BoxProcessorNode::BoxProcessorNode(const std::string &node_name)
     stack_optimizer_client_ = create_client<stack_optimization_interfaces::srv::StackOptimizer>("box_stack_optimizer");
     vacuum_set_client_ = create_client<vg_control_interfaces::srv::VacuumSet>("grip_adjust");
     vacuum_release_client_ = create_client<vg_control_interfaces::srv::VacuumRelease>("release_vacuum");
-
+    ollama_client_ = rclcpp_action::create_client<ollama_ros_interfaces::action::ProcessThinking>(this,"process_thinking");
 }
 
 
@@ -128,6 +189,17 @@ void BoxProcessorNode::initialize() {
     if (!vacuum_release_client_->wait_for_service(std::chrono::seconds(5))) {
         RCLCPP_ERROR(get_logger(), "VacuumRelease service not available");
     }
+
+    //check for action server
+    //Info getting object description
+    RCLCPP_INFO(get_logger(), "Getting object description from Ollama...");
+
+    if (!getObjectDescription("Pick up the boxes")) {
+        //Log Error
+        RCLCPP_ERROR(get_logger(), "Failed to get object description from Ollama");
+    }
+    RCLCPP_INFO(get_logger(), "Object description: %s", current_object_description_.c_str());
+
     
         // In your initialization method
     vacuum_a_sub_ = create_subscription<std_msgs::msg::Int32>(
@@ -359,7 +431,7 @@ bool BoxProcessorNode::getPlacementPose(const geometry_msgs::msg::Vector3& dimen
 
     request->width = static_cast<float>(place_holder_dimension_x);
     request->length = static_cast<float>(place_holder_dimension_y);
-    request->height = static_cast<float>(dimensions.z * 100.0);
+    request->height = static_cast<float>(box_height * 100.0);
     request->orientation = orientation;
     request->change_stack_allowed = false; // Don't rearrange existing stack
     
@@ -431,32 +503,22 @@ bool BoxProcessorNode::getPlacementPose(const geometry_msgs::msg::Vector3& dimen
                             std::abs(response->orientations[0].z) < 0.01 && 
                             std::abs(response->orientations[0].w) < 0.01;
 
-    bool is_90_degree_rotation = std::abs(response->orientations[0].x - 0.7071) < 0.01 && 
-                            std::abs(response->orientations[0].y - 0.7071) < 0.01 && 
+    bool is_90_degree_rotation = std::abs(response->orientations[0].w - 0.7071) < 0.01 && 
+                            std::abs(response->orientations[0].x - 0.7071) < 0.01 && 
                             std::abs(response->orientations[0].z) < 0.01 && 
-                            std::abs(response->orientations[0].w) < 0.01;
+                            std::abs(response->orientations[0].y) < 0.01;
         // Log the identity and 90 degree rotation checks
     RCLCPP_INFO(get_logger(), "Is identity rotation: %s", is_identity_rotation ? "true" : "false");
     RCLCPP_INFO(get_logger(), "Is 90 degree rotation: %s", is_90_degree_rotation ? "true" : "false");
+    // Log the best index
+    RCLCPP_INFO(get_logger(), "Best index: %d", best_index);
     if (is_identity_rotation) {
         // We only consider orientations 0 and 2 (0° and 180°)
         
         
         // Only check indices 0 and 2 (0° and 180°)
-        for (int i : {0, 1, 2, 3}) {
+        for (int i : {0, 2}) {
 
-            if (best_index == 1 || best_index == 3) {
-                // Only consider orientations 1 and 3
-                if (i == 0 || i == 2) {
-                    continue; // Skip this iteration
-                }
-            }
-            else {
-                // Only consider orientations 0 and 2
-                if (i == 1 || i == 3) {
-                    continue; // Skip this iteration
-                }
-            }
 
             auto& candidate_quat = candidate_quats[i];
             
@@ -480,20 +542,8 @@ bool BoxProcessorNode::getPlacementPose(const geometry_msgs::msg::Vector3& dimen
         
         
         // Only check indices 1 and 3 (90° and 270°)
-        for (int i : {0, 1, 2, 3}) {
+        for (int i : {1, 3}) {
 
-            if (best_index == 1 || best_index == 3) {
-                // Only consider orientations 1 and 3
-                if (i == 1 || i == 3) {
-                    continue; // Skip this iteration
-                }
-            }
-            else {
-                // Only consider orientations 0 and 2
-                if (i == 0 || i == 2) {
-                    continue; // Skip this iteration
-                }
-            }
 
             auto& candidate_quat = candidate_quats[i];
             
@@ -545,7 +595,7 @@ bool BoxProcessorNode::getPlacementPose(const geometry_msgs::msg::Vector3& dimen
 
 
     place_pose.pose.orientation = candidate_quats[new_best_index]; // Use first orientation
-    place_pose.pose.position.z += 0.1; // Adjust height for placement
+    place_pose.pose.position.z += 0.03; // Adjust height for placement
     
     RCLCPP_INFO(get_logger(), "Place position determined: [%f, %f, %f]",
         place_pose.pose.position.x, place_pose.pose.position.y, place_pose.pose.position.z);
@@ -600,9 +650,7 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
   
   grasp_ready_ = false;
   
-  // Wait for 2 seconds to ensure proper grip
-  RCLCPP_INFO(get_logger(), "Waiting 2 seconds for vacuum grip to stabilize");
-  rclcpp::sleep_for(std::chrono::seconds(2));
+  
   
   // Slower velocity for actual grasp motion
   move_group_->setMaxVelocityScalingFactor(0.005);
@@ -614,7 +662,8 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
   // Plan and execute Cartesian path to grasp pose
   waypoints.clear();
   waypoints.push_back(incremental_start_pose);
-  
+
+
   fraction = move_group_->computeCartesianPath(waypoints, eef_step, trajectory);
     if (fraction < 0.975) {
         RCLCPP_ERROR(get_logger(), "Failed to compute Cartesian path to incremental start position");
@@ -632,8 +681,8 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
 
         // Activate vacuum gripper
     auto vacuum_request = std::make_shared<vg_control_interfaces::srv::VacuumSet::Request>();
-    vacuum_request->channel_a = 210; // vacuum
-    vacuum_request->channel_b = 210; // vacuum
+    vacuum_request->channel_a = 180; // vacuum
+    vacuum_request->channel_b = 180; // vacuum
     
     auto vacuum_future = vacuum_set_client_->async_send_request(vacuum_request);
     if (vacuum_future.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
@@ -647,6 +696,10 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
         return false;
     }
   
+    // Wait for 2 seconds to ensure proper grip
+    RCLCPP_INFO(get_logger(), "Waiting 2 seconds for vacuum grip to stabilize");
+    rclcpp::sleep_for(std::chrono::seconds(2));
+    
     
      // Now begin the incremental approach with 0.5cm steps
     double increment = 0.005; // 0.5cm increments
@@ -661,9 +714,16 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
         // Calculate next step position
         double step_distance = std::min(increment, remaining_distance);
         next_pose.position.z -= step_distance;
+        box_height = std::fabs(std::fabs(next_pose.position.z) - std::fabs(0.81));
+        max_box_height = std::fabs(std::max(max_box_height, box_height));
+        //Log the next pose z
+        RCLCPP_INFO(get_logger(), "Next pose z: %.2f", next_pose.position.z); 
+
+        //Log the box height
+        RCLCPP_INFO(get_logger(), "Box height: %.2f", box_height);
         
         // RCLCPP_INFO for current step
-        RCLCPP_INFO(get_logger(), "Moving down %.1fmm. Current vacuum levels: A=%.1f, B=%.1f", 
+        RCLCPP_INFO(get_logger(), "Moving down %.1fmm. Current vacuum levels: A=%d, B=%d", 
                     step_distance * 1000, vacuum_level_a_, vacuum_level_b_);
         
         // Execute the small movement
@@ -687,7 +747,10 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
         remaining_distance -= step_distance;
         
         // Small delay for vacuum levels to update
-        rclcpp::sleep_for(std::chrono::milliseconds(100));
+        rclcpp::sleep_for(std::chrono::milliseconds(200));
+
+        // Log the current vacuum levels
+        RCLCPP_INFO(get_logger(), "Current vacuum levels: A=%d, B=%d", vacuum_level_a_, vacuum_level_b_);
         
         // Check vacuum levels (the callback will update grasp_ready_)
         if (grasp_ready_) {
@@ -709,7 +772,7 @@ bool BoxProcessorNode::pickBox(const geometry_msgs::msg::PoseStamped& pick_pose)
   move_group_->setMaxVelocityScalingFactor(0.1);
   move_group_->setMaxAccelerationScalingFactor(0.1);
   
-  // Lift the object (20cm up)
+  // Lift the object (60cm up)
   waypoints.clear();
   geometry_msgs::msg::Pose lift_pose = pick_pose.pose;
   lift_pose.position.z += 0.6;
@@ -809,10 +872,10 @@ bool BoxProcessorNode::placeBox(const geometry_msgs::msg::PoseStamped& place_pos
    geometry_msgs::msg::PoseStamped current_pose = move_group_->getCurrentPose();
    
    geometry_msgs::msg::PoseStamped target_pose = place_pose;
-   target_pose.pose.position.z += 0.35; // Adjust height for placement
+    target_pose.pose.position.z += 0.12; // Adjust height for placement
    
    geometry_msgs::msg::Pose pre_place_pose = target_pose.pose;
-   pre_place_pose.position.z += 0.1;
+   pre_place_pose.position.z += max_box_height + 0.1; // 10cm above the box
    
    // Plan and execute Cartesian path to pre-place pose
    std::vector<geometry_msgs::msg::Pose> waypoints;
@@ -874,6 +937,8 @@ bool BoxProcessorNode::placeBox(const geometry_msgs::msg::PoseStamped& place_pos
       RCLCPP_ERROR(get_logger(), "VacuumRelease service failed: %s", release_response->message.c_str());
       return false;
   }
+rclcpp::sleep_for(std::chrono::seconds(1));
+
   
   // Set faster velocity for retreat motion
   move_group_->setMaxVelocityScalingFactor(0.15);

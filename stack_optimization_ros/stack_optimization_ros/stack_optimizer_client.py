@@ -16,7 +16,7 @@ class BoxStackClient(Node):
         
         self.get_logger().info('Box stack service is now available')
     
-    def send_request(self, length, width, height, change_stack_allowed=False):
+    def send_request(self, width, length, height, change_stack_allowed=False):
         """Send a request to place a box"""
         request = StackOptimizer.Request()
         request.length = length
@@ -40,13 +40,13 @@ def main(args=None):
       
     ]
     
-    for i, (l, w, h) in enumerate(boxes):
+    for i, (w, l, h) in enumerate(boxes):
         # For the first 3 boxes, allow changing the stack
         # For the remaining boxes, don't allow changes
         change_allowed = False
         
-        print(f"Placing box {i+1}: {l}x{w}x{h} (change_allowed={change_allowed})")
-        future = client.send_request(l, w, h, change_allowed)
+        print(f"Placing box {i+1}: {w}x{l}x{h} (change_allowed={change_allowed})")
+        future = client.send_request(w, l, h, change_allowed)
         
         rclpy.spin_until_future_complete(client, future)
         

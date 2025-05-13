@@ -19,6 +19,7 @@ find_package(tf2_ros REQUIRED)
 find_package(pose_estimation_interfaces REQUIRED)
 find_package(vg_control_interfaces REQUIRED)
 find_package(stack_optimization_interfaces REQUIRED)
+find_package(ollama_ros_interfaces REQUIRED)
 
 add_executable(moveit_ur src/moveit_ur.cpp)
 target_include_directories(moveit_ur PUBLIC
@@ -67,6 +68,7 @@ ament_target_dependencies(move_to_pose_movegroup
   pose_estimation_interfaces
   vg_control_interfaces
   stack_optimization_interfaces
+  ollama_ros_interfaces
 
 )
 

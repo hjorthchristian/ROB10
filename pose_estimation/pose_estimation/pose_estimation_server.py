@@ -1046,7 +1046,7 @@ class RANSACSegmentationService(Node):
         # Return only the x, y, z coordinates
         return transformed_points
 
-    def get_plane_info_ransac(self, points_3d, iterations=100, threshold=0.01):
+    def get_plane_info_ransac(self, points_3d, iterations=100, threshold=0.0125):
         """
         Calculates plane using RANSAC. Returns dict including inlier_indices relative to input points_3d.
         """

@@ -12,6 +12,7 @@
   <depend> pose_estimation_interfaces</depend>
   <depend>vg_control_interfaces</depend>
   <depend>stack_optimization_interfaces</depend>
+  <depend>ollama_ros_interfaces</depend>
    
   <depend>rclcpp</depend>
   <depend>moveit_core</depend>

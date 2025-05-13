@@ -21,14 +21,28 @@ from transforms3d.quaternions import mat2quat
 from transforms3d.euler import euler2mat
 
 class BoxStackOptimizer:
-    def __init__(self, pallet_x=80, pallet_y=60, max_height=100, margin=5):
-        self.pallet_x = pallet_x
-        self.pallet_y = pallet_y
+    def __init__(self, pallet_x=80, pallet_y=60, max_height=100, margin=10):
+        """
+        Initialize the optimizer with pallet dimensions and safety margin.
+        
+        Note: In this implementation, we assume:
+        - x corresponds to width 
+        - y corresponds to length
+        - This is opposite of the original implementation
+        
+        Args:
+            pallet_x: Width of the pallet in optimizer units
+            pallet_y: Length of the pallet in optimizer units
+            max_height: Maximum stacking height
+            margin: Safety margin between boxes
+        """
+        self.pallet_x = pallet_x  # Width
+        self.pallet_y = pallet_y  # Length
         self.max_height = max_height
         self.margin = margin
         
         # Track placed boxes
-        self.placed_boxes = []  # (x, y, z, l, w, h, quaternion)
+        self.placed_boxes = []  # (x, y, z, w, l, h, quaternion)  # Note: w, l instead of l, w
         self.box_count = 0
         
         # Visualization attributes
@@ -47,12 +61,14 @@ class BoxStackOptimizer:
             self.fig = None
             self.ax = None
     
-    def add_box(self, length, width, height, change_stack_allowed=False):
+    def add_box(self, width, length, height, change_stack_allowed=False):
         """
         Add a new box to the stack
         
         Args:
-            length, width, height: Box dimensions
+            width: Width of the box (x dimension)
+            length: Length of the box (y dimension)
+            height: Height of the box (z dimension)
             change_stack_allowed: Whether to allow rearranging existing boxes
             
         Returns:
@@ -63,7 +79,7 @@ class BoxStackOptimizer:
         if change_stack_allowed:
             # We can rearrange all boxes, including previously placed ones
             boxes = self.placed_boxes.copy()
-            boxes.append((length, width, height))
+            boxes.append((width, length, height))
             
             # Solve from scratch with all boxes
             dimensions = [(b[0], b[1], b[2]) for b in boxes]
@@ -81,12 +97,12 @@ class BoxStackOptimizer:
                     if rotation:
                         # 90 degree rotation around z-axis
                         quat = euler2quat(0, 0, np.pi/2)
-                        box_length, box_width = box_dims[1], box_dims[0]  # Swap length/width
+                        box_width, box_length = box_dims[1], box_dims[0]  # Swap width/length
                     else:
                         quat = euler2quat(0, 0, 0)  # No rotation
-                        box_length, box_width = box_dims[0], box_dims[1]
+                        box_width, box_length = box_dims[0], box_dims[1]
                     
-                    self.placed_boxes.append((x, y, z, box_length, box_width, box_dims[2], quat))
+                    self.placed_boxes.append((x, y, z, box_width, box_length, box_dims[2], quat))
                 
                 # Return position and quaternion for the newest box
                 newest_pos = positions[-1]
@@ -106,58 +122,68 @@ class BoxStackOptimizer:
             boxes = [b for b in self.placed_boxes]  # Fixed positions
             
             # Solve for the new box only
-            success, position, rotation = self._optimize_new_box_placement(length, width, height)
+            success, position, rotation = self._optimize_new_box_placement(width, length, height)
             
             if success:
                 # Create quaternion from rotation
                 if rotation:
                     quat = euler2quat(0, 0, np.pi/2)
-                    box_length, box_width = width, length  # Swap length/width
+                    box_width, box_length = length, width  # Swap width/length
                 else:
                     quat = euler2quat(0, 0, 0)  # No rotation
-                    box_length, box_width = length, width
+                    box_width, box_length = width, length
                 
                 self.placed_boxes.append((position[0], position[1], position[2], 
-                                         box_length, box_width, height, quat))
+                                         box_width, box_length, height, quat))
                 self.box_count += 1
                 return True, position, quat
             else:
                 return False, None, None
     
     def _optimize_stack(self, boxes):
-        """Optimize the stacking of all boxes from scratch"""
+        """
+        Optimize the stacking of all boxes from scratch
+        
+        Args:
+            boxes: List of (width, length, height) tuples
+            
+        Returns:
+            success: Whether optimization succeeded
+            positions: List of (x, y, z) positions
+            rotations: List of rotation indicators (0 = no rotation, 1 = 90 deg rotation)
+        """
         n = len(boxes)
         model = cp_model.CpModel()
         
         x, y, z = [], [], []
         r = []  # rotation variable
-        length_vars, width_vars = [], []
+        width_vars, length_vars = [], []
         
         for i in range(n):
-            l, w, h = boxes[i]
+            w, l, h = boxes[i]  # width, length, height
             # Add margin to x and y lower bounds
             x_i = model.NewIntVar(self.margin, self.pallet_x - self.margin, f'x_{i}')
             y_i = model.NewIntVar(self.margin, self.pallet_y - self.margin, f'y_{i}')
             z_i = model.NewIntVar(0, self.max_height, f'z_{i}')
             r_i = model.NewBoolVar(f'r_{i}')  # 0 = no rotation, 1 = 90 deg rotation
             
-            l_i = model.NewIntVar(0, self.pallet_x, f'l_{i}')
-            w_i = model.NewIntVar(0, self.pallet_y, f'w_{i}')
-            model.Add(l_i == l).OnlyEnforceIf(r_i.Not())
-            model.Add(l_i == w).OnlyEnforceIf(r_i)
+            w_i = model.NewIntVar(0, self.pallet_x, f'w_{i}')
+            l_i = model.NewIntVar(0, self.pallet_y, f'l_{i}')
             model.Add(w_i == w).OnlyEnforceIf(r_i.Not())
             model.Add(w_i == l).OnlyEnforceIf(r_i)
+            model.Add(l_i == l).OnlyEnforceIf(r_i.Not())
+            model.Add(l_i == w).OnlyEnforceIf(r_i)
             
             # Make sure box fits on pallet with margin
-            model.Add(x_i + l_i <= self.pallet_x - self.margin)
-            model.Add(y_i + w_i <= self.pallet_y - self.margin)
+            model.Add(x_i + w_i <= self.pallet_x - self.margin)
+            model.Add(y_i + l_i <= self.pallet_y - self.margin)
             
             x.append(x_i)
             y.append(y_i)
             z.append(z_i)
             r.append(r_i)
-            length_vars.append(l_i)
             width_vars.append(w_i)
+            length_vars.append(l_i)
         
         # No-overlap constraints with margins
         for i in range(n):
@@ -170,17 +196,17 @@ class BoxStackOptimizer:
                 b6 = model.NewBoolVar(f'no_overlap_z2_{i}_{j}')
                 
                 # Add margin to no-overlap constraints
-                model.Add(x[i] + length_vars[i] + self.margin <= x[j]).OnlyEnforceIf(b1)
-                model.Add(x[i] + length_vars[i] + self.margin > x[j]).OnlyEnforceIf(b1.Not())
+                model.Add(x[i] + width_vars[i] + self.margin <= x[j]).OnlyEnforceIf(b1)
+                model.Add(x[i] + width_vars[i] + self.margin > x[j]).OnlyEnforceIf(b1.Not())
                 
-                model.Add(x[j] + length_vars[j] + self.margin <= x[i]).OnlyEnforceIf(b2)
-                model.Add(x[j] + length_vars[j] + self.margin > x[i]).OnlyEnforceIf(b2.Not())
+                model.Add(x[j] + width_vars[j] + self.margin <= x[i]).OnlyEnforceIf(b2)
+                model.Add(x[j] + width_vars[j] + self.margin > x[i]).OnlyEnforceIf(b2.Not())
                 
-                model.Add(y[i] + width_vars[i] + self.margin <= y[j]).OnlyEnforceIf(b3)
-                model.Add(y[i] + width_vars[i] + self.margin > y[j]).OnlyEnforceIf(b3.Not())
+                model.Add(y[i] + length_vars[i] + self.margin <= y[j]).OnlyEnforceIf(b3)
+                model.Add(y[i] + length_vars[i] + self.margin > y[j]).OnlyEnforceIf(b3.Not())
                 
-                model.Add(y[j] + width_vars[j] + self.margin <= y[i]).OnlyEnforceIf(b4)
-                model.Add(y[j] + width_vars[j] + self.margin > y[i]).OnlyEnforceIf(b4.Not())
+                model.Add(y[j] + length_vars[j] + self.margin <= y[i]).OnlyEnforceIf(b4)
+                model.Add(y[j] + length_vars[j] + self.margin > y[i]).OnlyEnforceIf(b4.Not())
                 
                 # Don't add margins to Z axis overlap to maintain physical stacking
                 model.Add(z[i] + boxes[i][2] <= z[j]).OnlyEnforceIf(b5)
@@ -226,11 +252,11 @@ class BoxStackOptimizer:
                 
                 # Compute overlap in x-direction
                 model.AddMaxEquality(x_overlap_start, [x[i], x[j]])
-                model.AddMinEquality(x_overlap_end, [x[i] + length_vars[i], x[j] + length_vars[j]])
+                model.AddMinEquality(x_overlap_end, [x[i] + width_vars[i], x[j] + width_vars[j]])
                 
                 # Compute overlap in y-direction
                 model.AddMaxEquality(y_overlap_start, [y[i], y[j]])
-                model.AddMinEquality(y_overlap_end, [y[i] + width_vars[i], y[j] + width_vars[j]])
+                model.AddMinEquality(y_overlap_end, [y[i] + length_vars[i], y[j] + length_vars[j]])
                 
                 # Calculate overlap area
                 x_overlap = model.NewIntVar(-self.pallet_x, self.pallet_x, f'x_overlap_{i}_{j}')
@@ -251,14 +277,13 @@ class BoxStackOptimizer:
                 model.AddBoolOr([positive_x_overlap.Not(), positive_y_overlap.Not()]).OnlyEnforceIf(support_area.Not())
                 
                 # Require sufficient support area - at least 50% of box area must be supported
-                # This ensures the box isn't just barely touching its support
                 min_overlap_x = model.NewIntVar(0, self.pallet_x, f'min_overlap_x_{i}_{j}')
                 # Using multiplication instead of division for IntVar
-                model.Add(2 * min_overlap_x == length_vars[i])
+                model.Add(2 * min_overlap_x == width_vars[i])
                 
                 min_overlap_y = model.NewIntVar(0, self.pallet_y, f'min_overlap_y_{i}_{j}')
                 # Using multiplication instead of division for IntVar
-                model.Add(2 * min_overlap_y == width_vars[i])
+                model.Add(2 * min_overlap_y == length_vars[i])
                 
                 sufficient_x_overlap = model.NewBoolVar(f'sufficient_x_overlap_{i}_{j}')
                 sufficient_y_overlap = model.NewBoolVar(f'sufficient_y_overlap_{i}_{j}')
@@ -294,7 +319,7 @@ class BoxStackOptimizer:
             
             # Calculate total base area of the box
             base_area = model.NewIntVar(0, self.pallet_x * self.pallet_y, f'base_area_{i}')
-            model.Add(base_area == length_vars[i] * width_vars[i])
+            model.Add(base_area == width_vars[i] * length_vars[i])
             
             # For boxes on the pallet (z=0), the support area is the full base area
             on_pallet = model.NewBoolVar(f'on_pallet_{i}')
@@ -320,7 +345,7 @@ class BoxStackOptimizer:
                     model.Add(z[i] != z[j] + boxes[j][2]).OnlyEnforceIf(is_below.Not())
                     
                     # Calculate overlap area
-                    overlap_area = self._calculate_overlap_area(model, i, j, x, y, length_vars, width_vars)
+                    overlap_area = self._calculate_overlap_area(model, i, j, x, y, width_vars, length_vars)
                     
                     # This area only counts if box j is directly below box i
                     effective_area = model.NewIntVar(0, self.pallet_x * self.pallet_y, f'effective_area_{i}_{j}')
@@ -347,8 +372,6 @@ class BoxStackOptimizer:
         # Sum all unsupported areas
         model.Add(total_unsupported_area == sum(unsupported_areas))
         
-        # Add after calculating unsupported_areas, before the final objective function
-
         # Calculate edge proximity scores
         edge_distance_sum = model.NewIntVar(0, self.pallet_x * self.pallet_y * n * 2, 'edge_distance_sum')
         edge_distances = []
@@ -363,14 +386,14 @@ class BoxStackOptimizer:
             # Distance to left edge is just x coordinate
             model.Add(dist_to_left == x[i])
             
-            # Distance to right edge is (pallet_x - (x + length))
-            model.Add(dist_to_right == self.pallet_x - (x[i] + length_vars[i]))
+            # Distance to right edge is (pallet_x - (x + width))
+            model.Add(dist_to_right == self.pallet_x - (x[i] + width_vars[i]))
             
             # Distance to bottom edge is just y coordinate
             model.Add(dist_to_bottom == y[i])
             
-            # Distance to top edge is (pallet_y - (y + width))
-            model.Add(dist_to_top == self.pallet_y - (y[i] + width_vars[i]))
+            # Distance to top edge is (pallet_y - (y + length))
+            model.Add(dist_to_top == self.pallet_y - (y[i] + length_vars[i]))
             
             # Calculate the sum of the TWO smallest distances to encourage corner placement
             # First find min distances for each axis
@@ -414,10 +437,22 @@ class BoxStackOptimizer:
         else:
             return False, None, None
     
-    def _optimize_new_box_placement(self, length, width, height):
+    def _optimize_new_box_placement(self, width, length, height):
+        """
+        Optimize placement of a new box with the existing stack
         
+        Args:
+            width: Width of the box (x dimension)
+            length: Length of the box (y dimension)
+            height: Height of the box
+            
+        Returns:
+            success: Whether placement succeeded
+            position: (x, y, z) position for the box
+            rotation: 0 = no rotation, 1 = 90 deg rotation
+        """
         model = cp_model.CpModel()
-    
+
         # First try to place the box on the ground level (z=0)
         # If that fails, allow stacking on other boxes
         
@@ -431,21 +466,21 @@ class BoxStackOptimizer:
         z_new = ground_model.NewConstant(0)
         r_new = ground_model.NewBoolVar('r_new')  # 0 = no rotation, 1 = 90 deg rotation
         
-        # ... [existing code for box dimensions] ...
-        l_new = ground_model.NewIntVar(0, self.pallet_x, 'l_new')
-        w_new = ground_model.NewIntVar(0, self.pallet_y, 'w_new')
-        ground_model.Add(l_new == length).OnlyEnforceIf(r_new.Not())
-        ground_model.Add(l_new == width).OnlyEnforceIf(r_new)
+        # Define width and length variables based on rotation
+        w_new = ground_model.NewIntVar(0, self.pallet_x, 'w_new')
+        l_new = ground_model.NewIntVar(0, self.pallet_y, 'l_new')
         ground_model.Add(w_new == width).OnlyEnforceIf(r_new.Not())
         ground_model.Add(w_new == length).OnlyEnforceIf(r_new)
+        ground_model.Add(l_new == length).OnlyEnforceIf(r_new.Not())
+        ground_model.Add(l_new == width).OnlyEnforceIf(r_new)
         
         # Make sure box fits on pallet with margin
-        ground_model.Add(x_new + l_new <= self.pallet_x - self.margin)
-        ground_model.Add(y_new + w_new <= self.pallet_y - self.margin)
+        ground_model.Add(x_new + w_new <= self.pallet_x - self.margin)
+        ground_model.Add(y_new + l_new <= self.pallet_y - self.margin)
         
         # No-overlap constraints with existing boxes on ground level
         for i, box in enumerate(self.placed_boxes):
-            x_i, y_i, z_i, l_i, w_i, h_i, _ = box
+            x_i, y_i, z_i, w_i, l_i, h_i, _ = box
             
             # Only check ground-level boxes
             if z_i == 0:
@@ -455,17 +490,17 @@ class BoxStackOptimizer:
                 b4 = ground_model.NewBoolVar(f'no_overlap_y2_new_{i}')
                 
                 # Add margin to no-overlap constraints
-                ground_model.Add(x_new + l_new + self.margin <= x_i).OnlyEnforceIf(b1)
-                ground_model.Add(x_new + l_new + self.margin > x_i).OnlyEnforceIf(b1.Not())
+                ground_model.Add(x_new + w_new + self.margin <= x_i).OnlyEnforceIf(b1)
+                ground_model.Add(x_new + w_new + self.margin > x_i).OnlyEnforceIf(b1.Not())
                 
-                ground_model.Add(x_i + l_i + self.margin <= x_new).OnlyEnforceIf(b2)
-                ground_model.Add(x_i + l_i + self.margin > x_new).OnlyEnforceIf(b2.Not())
+                ground_model.Add(x_i + w_i + self.margin <= x_new).OnlyEnforceIf(b2)
+                ground_model.Add(x_i + w_i + self.margin > x_new).OnlyEnforceIf(b2.Not())
                 
-                ground_model.Add(y_new + w_new + self.margin <= y_i).OnlyEnforceIf(b3)
-                ground_model.Add(y_new + w_new + self.margin > y_i).OnlyEnforceIf(b3.Not())
+                ground_model.Add(y_new + l_new + self.margin <= y_i).OnlyEnforceIf(b3)
+                ground_model.Add(y_new + l_new + self.margin > y_i).OnlyEnforceIf(b3.Not())
                 
-                ground_model.Add(y_i + w_i + self.margin <= y_new).OnlyEnforceIf(b4)
-                ground_model.Add(y_i + w_i + self.margin > y_new).OnlyEnforceIf(b4.Not())
+                ground_model.Add(y_i + l_i + self.margin <= y_new).OnlyEnforceIf(b4)
+                ground_model.Add(y_i + l_i + self.margin > y_new).OnlyEnforceIf(b4.Not())
                 
                 ground_model.AddBoolOr([b1, b2, b3, b4])
         
@@ -476,13 +511,62 @@ class BoxStackOptimizer:
         ground_solver.parameters.max_time_in_seconds = 2.0  # Shorter timeout
         ground_status = ground_solver.Solve(ground_model)
         
-        # If ground placement is successful, return that solution
+        # Add better logging and validation for the ground placement solution
         if ground_status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            print("Found ground-level placement solution")
-            return True, (ground_solver.Value(x_new), ground_solver.Value(y_new), 0), ground_solver.Value(r_new)
-        
-        print("No ground-level placement possible, trying stacking...")
+            print("Found potential ground-level placement solution")
             
+            # Get the solution values
+            solution_x = ground_solver.Value(x_new)
+            solution_y = ground_solver.Value(y_new)
+            solution_rot = ground_solver.Value(r_new)
+            
+            # Determine actual width and length based on rotation
+            solution_width = length if solution_rot else width
+            solution_length = width if solution_rot else length
+            
+            # Validate solution against existing boxes using a more direct approach
+            valid_solution = True
+            for i, box in enumerate(self.placed_boxes):
+                x_i, y_i, z_i, w_i, l_i, h_i, _ = box
+                if z_i == 0:  # Only check ground-level boxes
+                    # Print detailed box positions for debugging
+                    print(f"Validating against box {i}:")
+                    print(f"  New box: corner=({solution_x}, {solution_y}), dims={solution_width}x{solution_length}")
+                    print(f"  Existing box: corner=({x_i}, {y_i}), dims={w_i}x{l_i}")
+                    
+                    # Calculate the ranges for both boxes
+                    new_box_x_min, new_box_x_max = solution_x, solution_x + solution_width
+                    new_box_y_min, new_box_y_max = solution_y, solution_y + solution_length
+                    
+                    existing_box_x_min, existing_box_x_max = x_i, x_i + w_i
+                    existing_box_y_min, existing_box_y_max = y_i, y_i + l_i
+                    
+                    # Check if the boxes are far enough apart
+                    x_separation = (new_box_x_min >= existing_box_x_max + self.margin) or (existing_box_x_min >= new_box_x_max + self.margin)
+                    y_separation = (new_box_y_min >= existing_box_y_max + self.margin) or (existing_box_y_min >= new_box_y_max + self.margin)
+                    
+                    # If boxes are not separated in both X and Y, there's an overlap
+                    if not (x_separation or y_separation):
+                        print(f"Overlap detected between new box and box {i}!")
+                        print(f"  X overlap: {not x_separation} (new={new_box_x_min}-{new_box_x_max}, existing={existing_box_x_min}-{existing_box_x_max})")
+                        print(f"  Y overlap: {not y_separation} (new={new_box_y_min}-{new_box_y_max}, existing={existing_box_y_min}-{existing_box_y_max})")
+                        valid_solution = False
+                        break
+                    else:
+                        print(f"  No overlap - boxes are separated in {'X' if x_separation else 'Y'} dimension")
+            
+            if valid_solution:
+                print("Solution validated - no overlaps with existing boxes")
+                return True, (solution_x, solution_y, 0), solution_rot
+            else:
+                print("Invalid ground placement - overlaps detected")
+                # Continue to try non-ground placement
+        else:
+            print(f"Ground placement failed with status: {ground_status}")
+        
+        print("Trying non-ground placement...")
+        
+        # Rest of the method remains the same (non-ground placement logic)
         model = cp_model.CpModel()
         
         # Variables for the new box
@@ -491,17 +575,18 @@ class BoxStackOptimizer:
         y_new = model.NewIntVar(self.margin, self.pallet_y - self.margin, 'y_new')
         z_new = model.NewIntVar(0, self.max_height, 'z_new')
         r_new = model.NewBoolVar('r_new')  # 0 = no rotation, 1 = 90 deg rotation
+
         
-        l_new = model.NewIntVar(0, self.pallet_x, 'l_new')
-        w_new = model.NewIntVar(0, self.pallet_y, 'w_new')
+        w_new = model.NewIntVar(0, self.pallet_x, 'w_new')
+        l_new = model.NewIntVar(0, self.pallet_y, 'l_new')
         model.Add(l_new == length).OnlyEnforceIf(r_new.Not())
-        model.Add(l_new == width).OnlyEnforceIf(r_new)
+        model.Add(w_new == width).OnlyEnforceIf(r_new)
         model.Add(w_new == width).OnlyEnforceIf(r_new.Not())
-        model.Add(w_new == length).OnlyEnforceIf(r_new)
+        model.Add(l_new == length).OnlyEnforceIf(r_new)
         
         # Make sure box fits on pallet with margin
-        model.Add(x_new + l_new <= self.pallet_x - self.margin)
-        model.Add(y_new + w_new <= self.pallet_y - self.margin)
+        model.Add(x_new + w_new <= self.pallet_x - self.margin)
+        model.Add(y_new + l_new <= self.pallet_y - self.margin)
         
         # No-overlap constraints with existing boxes, with margins
         for i, box in enumerate(self.placed_boxes):
@@ -515,14 +600,14 @@ class BoxStackOptimizer:
             b6 = model.NewBoolVar(f'no_overlap_z2_new_{i}')
             
             # Add margin to no-overlap constraints
-            model.Add(x_new + l_new + self.margin <= x_i).OnlyEnforceIf(b1)
-            model.Add(x_new + l_new + self.margin > x_i).OnlyEnforceIf(b1.Not())
+            model.Add(x_new + w_new + self.margin <= x_i).OnlyEnforceIf(b1)
+            model.Add(x_new + w_new + self.margin > x_i).OnlyEnforceIf(b1.Not())
             
             model.Add(x_i + l_i + self.margin <= x_new).OnlyEnforceIf(b2)
             model.Add(x_i + l_i + self.margin > x_new).OnlyEnforceIf(b2.Not())
             
-            model.Add(y_new + w_new + self.margin <= y_i).OnlyEnforceIf(b3)
-            model.Add(y_new + w_new + self.margin > y_i).OnlyEnforceIf(b3.Not())
+            model.Add(y_new + l_new + self.margin <= y_i).OnlyEnforceIf(b3)
+            model.Add(y_new + l_new + self.margin > y_i).OnlyEnforceIf(b3.Not())
             
             model.Add(y_i + w_i + self.margin <= y_new).OnlyEnforceIf(b4)
             model.Add(y_i + w_i + self.margin > y_new).OnlyEnforceIf(b4.Not())
@@ -559,7 +644,7 @@ class BoxStackOptimizer:
         
         # Calculate base area of the new box
         base_area = model.NewIntVar(0, self.pallet_x * self.pallet_y, 'base_area_new')
-        model.AddMultiplicationEquality(base_area, [l_new, w_new])
+        model.AddMultiplicationEquality(base_area, [w_new, l_new])
         
         # For the new box, calculate support areas from boxes below
         supported_area = model.NewIntVar(0, self.pallet_x * self.pallet_y, 'supported_area_new')
@@ -582,11 +667,11 @@ class BoxStackOptimizer:
             
             # Compute overlap in x-direction
             model.AddMaxEquality(x_overlap_start, [x_new, x_i])
-            model.AddMinEquality(x_overlap_end, [x_new + l_new, x_i + l_i])
+            model.AddMinEquality(x_overlap_end, [x_new + w_new, x_i + l_i])
             
             # Compute overlap in y-direction
             model.AddMaxEquality(y_overlap_start, [y_new, y_i])
-            model.AddMinEquality(y_overlap_end, [y_new + w_new, y_i + w_i])
+            model.AddMinEquality(y_overlap_end, [y_new + l_new, y_i + w_i])
             
             # Calculate overlap dimensions
             x_overlap = model.NewIntVar(-self.pallet_x, self.pallet_x, f'x_overlap_new_{i}')
@@ -630,11 +715,11 @@ class BoxStackOptimizer:
             # Require sufficient support area - at least 50% of the new box's footprint
             min_overlap_x = model.NewIntVar(0, self.pallet_x, f'min_overlap_x_new_{i}')
             # Using multiplication instead of division for IntVar
-            model.Add(2 * min_overlap_x == l_new)
+            model.Add(2 * min_overlap_x == w_new)
             
             min_overlap_y = model.NewIntVar(0, self.pallet_y, f'min_overlap_y_new_{i}')
             # Using multiplication instead of division for IntVar
-            model.Add(2 * min_overlap_y == w_new)
+            model.Add(2 * min_overlap_y == l_new)
             
             sufficient_x_overlap = model.NewBoolVar(f'sufficient_x_overlap_new_{i}')
             sufficient_y_overlap = model.NewBoolVar(f'sufficient_y_overlap_new_{i}')
@@ -682,13 +767,13 @@ class BoxStackOptimizer:
         model.Add(dist_to_left == x_new)
 
         # Distance to right edge is (pallet_x - (x + length))
-        model.Add(dist_to_right == self.pallet_x - (x_new + l_new))
+        model.Add(dist_to_right == self.pallet_x - (x_new + w_new))
 
         # Distance to bottom edge is just y coordinate
         model.Add(dist_to_bottom == y_new)
 
         # Distance to top edge is (pallet_y - (y + width))
-        model.Add(dist_to_top == self.pallet_y - (y_new + w_new))
+        model.Add(dist_to_top == self.pallet_y - (y_new + l_new))
 
         # Calculate the minimum distance in each axis
         min_x_dist = model.NewIntVar(0, self.pallet_x, 'min_x_dist_new')
@@ -732,15 +817,25 @@ class BoxStackOptimizer:
             return True, (solver.Value(x_new), solver.Value(y_new), solver.Value(z_new)), solver.Value(r_new)
         else:
             # Print more details about the constraints
-            print(f"Failed to place box with dimensions {length}x{width}x{height}")
+            print(f"Failed to place box with dimensions {width}x{length}x{height}")
             print(f"Current stack has {len(self.placed_boxes)} boxes")
             for i, box in enumerate(self.placed_boxes):
-                x, y, z, l, w, h, _ = box
-                print(f"Box {i}: at ({x}, {y}, {z}) with dimensions {l}x{w}x{h}")
+                x, y, z, w, l, h, _ = box
+                print(f"Box {i}: at ({x}, {y}, {z}) with dimensions {w}x{l}x{h}")
             return False, None, None
-    
-    def _calculate_overlap_area(self, model, i, j, x, y, length_vars, width_vars):
-        """Calculate the overlap area between box i and box j"""
+    def _calculate_overlap_area(self, model, i, j, x, y, width_vars, length_vars):
+        """
+        Calculate the overlap area between box i and box j
+        
+        Args:
+            model: CP model
+            i, j: Indices of boxes
+            x, y: Arrays of x and y position variables
+            width_vars, length_vars: Arrays of box width and length variables
+            
+        Returns:
+            overlap_area: Variable representing the overlap area
+        """
         x_overlap_start = model.NewIntVar(0, self.pallet_x, f'x_overlap_start_{i}_{j}')
         x_overlap_end = model.NewIntVar(0, self.pallet_x, f'x_overlap_end_{i}_{j}')
         y_overlap_start = model.NewIntVar(0, self.pallet_y, f'y_overlap_start_{i}_{j}')
@@ -751,8 +846,8 @@ class BoxStackOptimizer:
         model.AddMaxEquality(y_overlap_start, [y[i], y[j]])
         
         # Compute min of end positions (overlap end)
-        model.AddMinEquality(x_overlap_end, [x[i] + length_vars[i], x[j] + length_vars[j]])
-        model.AddMinEquality(y_overlap_end, [y[i] + width_vars[i], y[j] + width_vars[j]])
+        model.AddMinEquality(x_overlap_end, [x[i] + width_vars[i], x[j] + width_vars[j]])
+        model.AddMinEquality(y_overlap_end, [y[i] + length_vars[i], y[j] + length_vars[j]])
         
         # Calculate overlap dimensions
         x_overlap = model.NewIntVar(-self.pallet_x, self.pallet_x, f'x_overlap_{i}_{j}')
@@ -790,8 +885,8 @@ class BoxStackOptimizer:
         self.ax.set_xlim(0, max(self.pallet_x, self.pallet_y))
         self.ax.set_ylim(0, max(self.pallet_x, self.pallet_y))
         self.ax.set_zlim(0, self.max_height)
-        self.ax.set_xlabel("X")
-        self.ax.set_ylabel("Y")
+        self.ax.set_xlabel("X (Width)")
+        self.ax.set_ylabel("Y (Length)")
         self.ax.set_zlabel("Z")
         self.ax.set_title("Box Stack Visualization")
         
@@ -807,18 +902,18 @@ class BoxStackOptimizer:
         
         # Plot each box
         for i, box in enumerate(self.placed_boxes):
-            x, y, z, l, w, h, _ = box
+            x, y, z, w, l, h, _ = box  # x, y, z, width, length, height, quaternion
 
             #Log dimensions and properties
-            print(f'Box {i}: Position ({x}, {y}, {z}), Size ({l}, {w}, {h})')
+            print(f'Box {i}: Position ({x}, {y}, {z}), Size ({w}, {l}, {h})')
             
             # Plot the box
-            self._plot_box(self.ax, (x, y, z), (l, w, h), cmap(i))
+            self._plot_box(self.ax, (x, y, z), (w, l, h), cmap(i))
             
             # Plot margins if enabled
             if self.show_margins:
                 margin_origin = (x - self.margin, y - self.margin, z)
-                margin_size = (l + 2*self.margin, w + 2*self.margin, h)
+                margin_size = (w + 2*self.margin, l + 2*self.margin, h)
                 self._plot_margin(self.ax, margin_origin, margin_size, cmap(i))
         
         # Add view controls
@@ -828,9 +923,17 @@ class BoxStackOptimizer:
         plt.show(block=False)
     
     def _plot_box(self, ax, origin, size, color):
-        """Helper function to plot a box"""
+        """
+        Helper function to plot a box
+        
+        Args:
+            ax: Matplotlib axis
+            origin: (x, y, z) origin point
+            size: (width, length, height) box dimensions
+            color: Box color
+        """
         x0, y0, z0 = origin
-        dx, dy, dz = size
+        dx, dy, dz = size  # width, length, height
         
         # Define the vertices
         verts = [
@@ -861,7 +964,15 @@ class BoxStackOptimizer:
         ax.add_collection3d(collection)
     
     def _plot_margin(self, ax, origin, size, color):
-        """Helper function to plot the safety margin boundaries"""
+        """
+        Helper function to plot the safety margin boundaries
+        
+        Args:
+            ax: Matplotlib axis
+            origin: (x, y, z) origin point
+            size: (width, length, height) margin box dimensions
+            color: Box color
+        """
         x0, y0, z0 = origin
         dx, dy, dz = size
         
@@ -889,7 +1000,7 @@ class BoxStackService(Node):
         super().__init__('box_stack_optimizer_service')
         
         # Create the optimizer with the safety margin
-        self.optimizer = BoxStackOptimizer(margin=5)  # Use 5 units as requested
+        self.optimizer = BoxStackOptimizer(margin=10)  # Use 5 units as requested
         
         # Create the service
         self.srv = self.create_service(
@@ -917,9 +1028,9 @@ class BoxStackService(Node):
         
         # Define the coordinate transformation from optimizer (local) to global coordinates
         # Pallet corners in global coordinates (in meters)
-        top_left = np.array([0.5792, 0.4032, -0.8384])
-        top_right = np.array([1.1630, 0.4828, -0.8489])
-        bottom_left = np.array([0.6782, -0.3763, -0.8343])
+        top_left = np.array([0.5792, 0.4032, -0.7884])
+        top_right = np.array([1.1630, 0.4828, -0.7889])
+        bottom_left = np.array([0.6782, -0.3763, -0.7843])
         
         # Calculate vectors for the pallet coordinate system
         # X-axis: From top-left to bottom-left (as requested)
@@ -1172,16 +1283,15 @@ class BoxStackService(Node):
         
         # Add box information
         for i, box in enumerate(self.optimizer.placed_boxes):
-            x, y, z, l, w, h, quat = box
+            x, y, z, w, l, h, quat = box  # x, y, z, width, length, height, quaternion
             
             box_info = BoxInfo()
             box_info.id = i
             box_info.x = float(x)  # Convert to float
             box_info.y = float(y)
             box_info.z = float(z)
-            box_info.length = float(l)
-            box_info.width = float(w)
-            box_info.height = float(h)
+            box_info.width = float(w)  # Now width corresponds to x
+            box_info.length = float(l)  # Now length corresponds to y
             box_info.height = float(h)
             
             # Convert quaternion to ROS format
@@ -1241,6 +1351,10 @@ class BoxStackService(Node):
         - Input box dimensions (request) are in optimizer units
         - Internal optimizer coordinates are in abstract units
         - Output position (response) is in global coordinate system meters
+        
+        In this modified implementation, we assume:
+        - x corresponds to width (not length as in previous code)
+        - y corresponds to length (not width as in previous code)
         """
         self.get_logger().info(f'Received request to place box: {request.width}x{request.length}x{request.height} units')
         
@@ -1251,9 +1365,10 @@ class BoxStackService(Node):
             return response
         
         # Place the box (in optimizer's internal units)
+        # Swap length and width when calling add_box to change the interpretation
         success, position, quat = self.optimizer.add_box(
-            request.width, 
-            request.length, 
+            request.width,  # Previously was request.length
+            request.length, # Previously was request.width
             request.height,
             request.change_stack_allowed
         )
@@ -1263,19 +1378,22 @@ class BoxStackService(Node):
             response.success = True
             
             # Determine the actual dimensions of the box based on rotation (still in optimizer units)
-            #Log Quaternion
-            self.get_logger().info(f'Box quaternion: [{quat[0]:.4f}, {quat[1]:.4f}, {quat[2]:.4f}, {quat[3]:.4f}]')
-
+            # Updated to match the new assumption that x is width, not length
+            #Log width and length before swapping
+            self.get_logger().info(f'Box dimensions before swapping (optimizer units): {request.width}x{request.length}x{request.height}')
             if quat[2] > 0:  # Rotated 90 degrees around z-axis
-                box_length = request.length
-                box_width = request.width
-            else:
-                box_length = request.width
                 box_width = request.length
-            
+                box_length = request.width
+            else:
+                box_width = request.width
+                box_length = request.length
+            #Log box dimensions after swapping
+            self.get_logger().info(f'Box dimensions after swapping (optimizer units): ({box_width}, {box_length}, {request.height})')
+
             # Calculate center position from corner position in local coordinates (optimizer units)
-            local_center_x = position[0] + box_length / 2
-            local_center_y = position[1] + box_width / 2
+            # Updated to match the new assumption that x is width, not length
+            local_center_x = position[0] + box_width / 2
+            local_center_y = position[1] + box_length / 2
             local_center_z = position[2] + request.height  #box needs to be placed on top of the stack
             
             # Convert to global coordinates (in meters) with proper scaling
@@ -1288,9 +1406,9 @@ class BoxStackService(Node):
             response.position.z = float(global_center[2])
             
             # Set x_dimension and y_dimension in response (in optimizer units)
-            # Note: If client needs these in meters, multiply by the appropriate scaling factor
-            response.x_dimension = int(box_length)
-            response.y_dimension = int(box_width)
+            # Updated to match the new assumption that x is width, not length
+            response.x_dimension = int(box_width)  # Previously was box_length
+            response.y_dimension = int(box_length) # Previously was box_width
             
             # Create quaternion for response
             # Note: The quaternion should also be transformed to align with the global coordinate system
